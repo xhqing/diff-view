@@ -4,7 +4,7 @@
 
 > The VS Code companion for pi's "change visualizer": close pi-opened diff tabs **silently** with a single pi command.
 
-Works together with the global pi extension [`ai-edit-diff`](../../../.pi/agent/extensions/ai-edit-diff.ts): type `/close-diff` in pi (or ask the agent to call the `close_diff` tool) and the diff views pi opened in VS Code are closed silently.
+Works together with the global pi extension [`diff-view`](../../../.pi/agent/extensions/diff-view.ts) (formerly `ai-edit-diff`): type `/close-diff` in pi (or ask the agent to call the `close_diff` tool) and the diff views pi opened in VS Code are closed silently.
 
 ## Why this exists
 
@@ -18,7 +18,7 @@ So the two sides speak a **request-file + ack-file** protocol instead: pi only w
 
 ## How it works
 
-- The pi side (`ai-edit-diff` extension) writes requests under `~/.pi/agent/state/ai-edit-diff/`:
+- The pi side (`diff-view` extension, formerly `ai-edit-diff`) writes requests under `~/.pi/agent/state/ai-edit-diff/`:
   - `close-requests/<id>.json`: `{id, ts, paths}`; an empty `paths` array means "close every pi-opened diff", otherwise only those files;
   - it then waits for acks in `close-acks/<id>-*.json` (one per VS Code window, carrying the closed count) for up to 2 seconds and reports the summary to the user.
 - This extension polls the request directory **inside every VS Code window** once per second: it only handles requests written within the last 30 seconds (so stale requests can't close tabs that were opened later), writes an ack when done, and garbage-collects expired requests and acks.

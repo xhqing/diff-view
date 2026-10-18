@@ -4,7 +4,7 @@
 
 > pi「改动可视化」的 VSCode 侧助手：让 pi 里一条命令就能**静默关闭由 pi 打开的 diff 标签**。
 
-配合全局 pi 扩展 [`ai-edit-diff`](../../../.pi/agent/extensions/ai-edit-diff.ts)（改动可视化）使用：在 pi 里键入 `/close-diff`（或让我调用 `close_diff` 工具），VSCode 里由 pi 打开的 diff 视图就会静默关闭。
+配合全局 pi 扩展 [`diff-view`](../../../.pi/agent/extensions/diff-view.ts)（原名 ai-edit-diff，改动可视化）使用：在 pi 里键入 `/close-diff`（或让我调用 `close_diff` 工具），VSCode 里由 pi 打开的 diff 视图就会静默关闭。
 
 ## 为什么需要它
 
@@ -18,7 +18,7 @@ VSCode 没有提供「从外部关闭标签页」的官方接口：
 
 ## 工作原理
 
-- pi 侧（`ai-edit-diff` 扩展）在 `~/.pi/agent/state/ai-edit-diff/` 下写请求：
+- pi 侧（`diff-view` 扩展）在 `~/.pi/agent/state/ai-edit-diff/` 下写请求：
   - `close-requests/<id>.json`：`{id, ts, paths}`；`paths` 为空数组 = 关闭全部由 pi 打开的 diff，否则只关这些文件；
   - 然后等待 `close-acks/<id>-*.json` 确认（每个 VSCode 窗口写一份、含关闭数量），最多等 2 秒后汇总回报用户。
 - 本扩展在**每个 VSCode 窗口内**每 1 秒轮询一次请求目录：只处理 30 秒内写入的请求（防陈旧请求误关后来新开的标签），处理完回写确认；过期请求与确认文件会自动清理。

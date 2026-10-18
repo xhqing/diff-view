@@ -1,5 +1,5 @@
 'use strict';
-// diff-bridge — pi「改动可视化」（pi 扩展 ai-edit-diff）的 VSCode 侧助手。
+// diff-bridge — pi「改动可视化」（pi 扩展 diff-view，原名 ai-edit-diff）的 VSCode 侧助手。
 //
 // 职责：轮询 pi 写下的关闭请求（~/.pi/agent/state/ai-edit-diff/close-requests/），
 // 把 pi 的 `/close-diff`（或 AI 工具 close_diff）落实为「静默关闭由 pi 打开的 diff 标签」，
