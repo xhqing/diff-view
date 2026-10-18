@@ -1,5 +1,5 @@
 'use strict';
-// diff-bridge — pi「改动可视化」（pi 扩展 diff-view，原名 ai-edit-diff）的 VSCode 侧助手。
+// diff-view-vsce — diff-view 项目的 VS Code 侧组件（配合 pi 侧组件 diff-view-pie 使用，两个都装才是完整功能）
 //
 // 职责：轮询 pi 写下的关闭请求（~/.pi/agent/state/ai-edit-diff/close-requests/），
 // 把 pi 的 `/close-diff`（或 AI 工具 close_diff）落实为「静默关闭由 pi 打开的 diff 标签」，
@@ -23,7 +23,7 @@ const REQ_VALID_MS = 30 * 1000;       // 请求有效期：超过不再执行（
 const REQ_KEEP_MS = 120 * 1000;       // 请求文件保留期：到期删除（多窗口各自轮询，不立即删以免别的窗口错过）
 const ACK_KEEP_MS = 10 * 60 * 1000;   // 确认文件保留期
 
-let output = null; // OutputChannel：排障用（命令面板 → Output: Focus on Output View → diff-bridge）
+let output = null; // OutputChannel：排障用（命令面板 → Output: Focus on Output View → diff-view-vsce）
 
 function log(msg) {
   try { if (output) output.appendLine(`[${new Date().toISOString()}] ${msg}`); } catch {}
@@ -103,7 +103,7 @@ async function tick(processed) {
 }
 
 function activate(context) {
-  output = vscode.window.createOutputChannel('diff-bridge');
+  output = vscode.window.createOutputChannel('diff-view-vsce');
   context.subscriptions.push(output);
 
   const processed = new Set();
@@ -118,9 +118,9 @@ function activate(context) {
   context.subscriptions.push({ dispose: () => clearInterval(timer) });
 
   // 手动兜底：命令面板执行（或排障用）
-  context.subscriptions.push(vscode.commands.registerCommand('diffBridge.closeAll', async () => {
+  context.subscriptions.push(vscode.commands.registerCommand('diffViewVsce.closeAll', async () => {
     const n = await closeBridgedDiffs([]);
-    vscode.window.setStatusBarMessage(`diff-bridge：已关闭 ${n} 个 pi diff 标签`, 3000);
+    vscode.window.setStatusBarMessage(`diff-view-vsce：已关闭 ${n} 个 pi diff 标签`, 3000);
   }));
 
   log(`已启动（state: ${STATE_DIR}）`);

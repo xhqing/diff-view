@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-10-18
+
+### Changed
+
+- **整合为 diff-view 项目（两个组件、一次安装）**：2026-10-18 用户决定——pi 侧与 VSCode 侧本是一个功能，应放同一个项目。原 `diff-bridge` 拆为两个组件：
+  - `diff-view-pie/`：pi 侧扩展（源 `diff-view.ts`，部署到 `~/.pi/agent/extensions/`）；
+  - `diff-view-vsce/`：VS Code 侧扩展（原项目主体代码迁入；扩展身份 `xhqing.diff-bridge` → `xhqing.diff-view-vsce`，名称 / 显示名 / 命令 id / 输出渠道 / 状态栏文案同步更新）。
+- 新增 `install.sh`：一次安装两个组件（pi 侧拷贝部署 + VS Code 侧打包安装，含旧 `xhqing.diff-bridge` 卸载）；README 双语重写，说明两个组件各自职责、都必须安装、协作机制与排障。
+- logo 更名为 `diff-view`（双窗格 + 跨桥弧线不变）；版本号 0.1.0 → 0.2.0。
+- 内部管道不变（有意）：状态目录 `~/.pi/agent/state/ai-edit-diff/` 与环境变量 `AI_EDIT_DIFF_*` 保持原名——两个组件与旧版本会话都指向它们，改名会打断请求 / 确认协议。
+
 ## 2026-10-18
 
 ### Changed

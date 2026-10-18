@@ -1,0 +1,7 @@
+# 仓库管理文件（不需要进 vsix）
+.pi
+AGENTS.md
+.github/**
+test/**
+tmp/**
+*.vsix
