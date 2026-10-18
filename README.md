@@ -1,6 +1,14 @@
-# diff-bridge
+<div align="center">
+  <img src="assets/logo.svg" alt="diff-bridge" width="640">
 
-**English** | [简体中文](README_cn.md)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
+  [![Version](https://img.shields.io/badge/Version-0.1.0-blue)](CHANGELOG.md)
+  [![Type](https://img.shields.io/badge/Type-VSCode%20Extension-0078D4)](#)
+
+  [简体中文](README_cn.md)
+</div>
+
+# diff-bridge
 
 > The VS Code companion for pi's "change visualizer": close pi-opened diff tabs **silently** with a single pi command.
 
@@ -54,3 +62,9 @@ code --uninstall-extension xhqing.diff-bridge
 - Pure logic (path checks / request parsing) lives in `lib/util.js`;
 - throwaway verification scripts live in `tmp/` (not committed); the project's real test cases are authored by the Test Agent (Hopper);
 - self-check: `npm run check` (syntax check for every JS file).
+
+## License & Attribution
+
+Copyright (c) 2026 All Contributors. Released under the [MIT License](LICENSE.md).
+
+Attribution: if you use or reference this project, please keep the copyright notice and credit the source: [diff-bridge](https://github.com/xhqing/diff-bridge).

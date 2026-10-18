@@ -1,6 +1,14 @@
-# diff-bridge
+<div align="center">
+  <img src="assets/logo.svg" alt="diff-bridge" width="640">
 
-[English](README.md) | **简体中文**
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
+  [![Version](https://img.shields.io/badge/Version-0.1.0-blue)](CHANGELOG.md)
+  [![Type](https://img.shields.io/badge/Type-VSCode%20Extension-0078D4)](#)
+
+  [English](README.md)
+</div>
+
+# diff-bridge
 
 > pi「改动可视化」的 VSCode 侧助手：让 pi 里一条命令就能**静默关闭由 pi 打开的 diff 标签**。
 
@@ -54,3 +62,9 @@ code --uninstall-extension xhqing.diff-bridge
 - 纯逻辑（路径判断 / 请求解析）在 `lib/util.js`；
 - 交付前的临时验证脚本示例见 `tmp/`（不提交）；项目正式测试用例由测试 Agent（Hopper）出题；
 - 自检：`npm run check`（全部 JS 语法检查）。
+
+## 版权与署名
+
+Copyright (c) 2026 All Contributors。基于 [MIT License](LICENSE.md) 发布。
+
+署名：使用或引用本项目时，请保留版权声明并注明来源：[diff-bridge](https://github.com/xhqing/diff-bridge)。
