@@ -40,7 +40,23 @@ The script installs both halves; then:
 Manual install:
 
 1. **pi side** — copy `diff-view-pie/diff-view.ts` into `~/.pi/agent/extensions/`;
-2. **VS Code side** — `cd diff-view-vsce && npx @vscode/vsce package --out diff-view-vsce.vsix`, then `code --install-extension diff-view-vsce.vsix --force` (uninstall the legacy `xhqing.diff-bridge` first if you still have it).
+2. **VS Code side** — run `./build.sh`, unzip `dist/diff-view-<version>.zip`, then `code --install-extension diff-view-vsce-<version>.vsix --force` (uninstall the legacy `xhqing.diff-bridge` first if you still have it).
+
+Prefer a released build? Download `diff-view-<version>.zip` from the [latest release](https://github.com/xhqing/diff-view/releases) and install its two halves the same way.
+
+## Build & release artifacts
+
+```bash
+./build.sh
+```
+
+produces the single release artifact in `dist/`, versioned with the project version (`VERSION` is the single source of truth — both halves share it):
+
+- `dist/diff-view-<version>.zip`, containing:
+  - `diff-view-vsce-<version>.vsix` — the VS Code side (install with `code --install-extension <vsix> --force`);
+  - `diff-view.ts` — the pi side (copy into `~/.pi/agent/extensions/`).
+
+Installing from the artifact is the same two-step requirement: install both halves. Released builds are attached to [GitHub Releases](https://github.com/xhqing/diff-view/releases).
 
 ## Usage
 

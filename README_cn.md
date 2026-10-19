@@ -40,7 +40,23 @@
 手动安装：
 
 1. **pi 侧** —— 把 `diff-view-pie/diff-view.ts` 拷进 `~/.pi/agent/extensions/`；
-2. **VS Code 侧** —— `cd diff-view-vsce && npx @vscode/vsce package --out diff-view-vsce.vsix`，然后 `code --install-extension diff-view-vsce.vsix --force`（若还装着旧身份 `xhqing.diff-bridge`，先卸载）。
+2. **VS Code 侧** —— 跑 `./build.sh`，解压 `dist/diff-view-<version>.zip`，然后 `code --install-extension diff-view-vsce-<version>.vsix --force`（若还装着旧身份 `xhqing.diff-bridge`，先卸载）。
+
+想直接用已发布的构建？从[最新 Release](https://github.com/xhqing/diff-view/releases) 下载 `diff-view-<version>.zip`，按同样的两步安装它的两个组件。
+
+## 构建与发布产物
+
+```bash
+./build.sh
+```
+
+产出**唯一**发布产物到 `dist/`，版本号取自项目版本（`VERSION` 是唯一权威——两个组件共用同一个版本号）：
+
+- `dist/diff-view-<version>.zip`，内含：
+  - `diff-view-vsce-<version>.vsix` —— VS Code 侧（用 `code --install-extension <vsix> --force` 安装）；
+  - `diff-view.ts` —— pi 侧（拷进 `~/.pi/agent/extensions/`）。
+
+从产物安装同样是「两个都要装」的两步。已发布的构建见 [GitHub Releases](https://github.com/xhqing/diff-view/releases)。
 
 ## 使用
 

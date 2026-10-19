@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.0] - 2026-10-18
+## [0.2.0] - 2026-10-19
 
 ### Changed
 
@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
 - 新增 `install.sh`：一次安装两个组件（pi 侧拷贝部署 + VS Code 侧打包安装，含旧 `xhqing.diff-bridge` 卸载）；README 双语重写，说明两个组件各自职责、都必须安装、协作机制与排障。
 - logo 更名为 `diff-view`（双窗格 + 跨桥弧线不变）；版本号 0.1.0 → 0.2.0。
 - 内部管道不变（有意）：状态目录 `~/.pi/agent/state/ai-edit-diff/` 与环境变量 `AI_EDIT_DIFF_*` 保持原名——两个组件与旧版本会话都指向它们，改名会打断请求 / 确认协议。
+
+### Added
+
+- `build.sh`：产出**唯一**发布产物 `dist/diff-view-<version>.zip`——内含 `diff-view-vsce-<version>.vsix`（VS Code 侧）与 `diff-view.ts`（pi 侧），两个组件共用项目 `VERSION` 版本号（构建前校验与 `package.json` 一致）；`install.sh` 改为基于该产物安装 VS Code 侧。
+- `.github/workflows/ci.yml`：JS 语法检查、shell 语法检查、版本号一致性（`VERSION` ↔ `package.json` / CHANGELOG / README 徽章）、产物构建冒烟（校验 zip 内含两个组件）。
+- 开源到 GitHub：公开仓库 `xhqing/diff-view`（README 与 vsix 元数据里的地址自此生效）；发布 `v0.2.0`，产物为上述 zip。
 
 ## 2026-10-18
 
