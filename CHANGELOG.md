@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- CI workflow YAML 语法错误修复：步骤名里的冒号未加引号，导致 GitHub Actions 无法解析、启动即失败（0 秒失败、无任务）；已加本地 YAML 校验并推送后验证 CI 运行。
+
 ## [0.2.0] - 2026-10-19
 
 ### Changed

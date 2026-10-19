@@ -36,7 +36,7 @@ jobs:
           echo "VERSION=$V package.json=$PKG changelog=$CL readme-badge=$BD"
           [ "$V" = "$PKG" ] && [ "$V" = "$CL" ] && [ "$V" = "$BD" ] || { echo "版本号不一致"; exit 1; }
 
-      - name: Build artifact smoke test (one zip: vsix + pi extension, same version)
+      - name: Build artifact smoke test (single zip, both halves, shared version)
         run: |
           command -v zip >/dev/null || sudo apt-get install -y zip
           ./build.sh
