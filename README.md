@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-0.2.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-0.2.1-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20%2B%20VS%20Code-6E56CF)](#)
 
   [简体中文](README_cn.md)

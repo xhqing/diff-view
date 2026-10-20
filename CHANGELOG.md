@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.1] - 2026-10-20
+
+### Added
+
+- VS Code 扩展图标：`diff-view-vsce/icon.png`（512×512 圆角方形、indigo 渐变、双窗格 + 跨桥弧线——与项目 logo 同一套符号）；`package.json` 的 `icon` 字段指向它，扩展详情页 / 列表不再显示默认占位图。
 
 ### Fixed
 

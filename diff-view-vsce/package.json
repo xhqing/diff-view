@@ -2,9 +2,10 @@
   "name": "diff-view-vsce",
   "displayName": "diff-view-vsce",
   "description": "diff-view 的 VS Code 侧组件：按请求静默关闭由 pi 打开的 diff 标签（需配合 pi 侧组件 diff-view-pie 使用，两个都装才是完整功能）。",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "xhqing",
   "license": "MIT",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/xhqing/diff-view.git"
