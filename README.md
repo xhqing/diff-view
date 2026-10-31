@@ -10,6 +10,8 @@
 
 # diff-view
 
+> ⚠️ **Retired (2026-10-31)**: This suite is no longer in use — both extensions (the pi-side `diff-view-pie` and the VSCode-side `diff-view-vsce`) have been uninstalled from the user's machine, and the snapshot state directory was cleaned up. To inspect AI edits, pause auto-commit with `add-mode` / `commit-mode` and use plain `git diff` / `git diff --cached` instead. The repository is kept as an archive and is no longer maintained.
+
 > A git-independent file diff viewer spanning pi and VS Code — two extensions, one feature.
 
 **diff-view consists of two extensions. Both must be installed for the complete feature:**

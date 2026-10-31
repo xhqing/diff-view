@@ -10,6 +10,8 @@
 
 # diff-view
 
+> ⚠️ **已注销（2026-10-31）**：本套件已停用——两个扩展（pi 侧 `diff-view-pie`、VSCode 侧 `diff-view-vsce`）已从用户机器卸载，快照状态目录也已清理。需要查看 AI 改动时，改用 `add-mode` / `commit-mode` 暂停自动提交，再直接 `git diff` / `git diff --cached`。仓库保留作存档，不再维护。
+
 > 独立于 git 的文件 diff 查看器，横跨 pi 与 VS Code —— 两个扩展、一个功能。
 
 **diff-view 由两个扩展组成，两个都安装才是完整功能：**

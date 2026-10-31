@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [未发布]
 
+### 注销（2026-10-31 用户决定，功能停用）
+
+- **为什么**：用户认为需要看 diff 时，用 `add-mode` / `commit-mode` 暂停自动提交即可（改动保留在工作区，直接 `git diff` / `git diff --cached`），不再需要专门的快照工具。原先每步 AI 编辑都要留快照，状态目录累计约 925MB。
+- **做了什么**：卸载两个扩展（`~/.pi/agent/extensions/diff-view.ts` 与 VSCode 扩展 `xhqing.diff-view-vsce`），清理 `~/.pi/agent/state/ai-edit-diff` 快照目录；README 顶部加注销说明（中英双语）。项目代码与 GitHub 仓库保留作存档，不再维护。不涉版本号（不发版）。
+- **能力差异**（如实记录）：暂停自动提交后看到的是 `git diff` 的累计改动（相对暂存区或 HEAD）；原工具能逐步回看每次 AI 编辑的前后快照。需要逐步历史时用 `git log -p` 或分段提交。
+
 ### 变更（`.pi` 由软链接改为真实目录 + 资源引用：全局规矩 2026-10-30 修订）
 
 - **为什么改**：2026-10-30 用户修订了子项目的智能体专属文件规则。旧形态把 `.pi` 整个挂成指向负责 Agent 的软链接，「共享」与「独占」被压在同一个符号上：子项目要放自己的配置时无处安放，硬写进 `.pi` 等于直接写进 Kit 的 Agent 项目——会瞬间影响全部兄弟子项目、并进 Agent 仓库的 git 历史。新规则分层：身份层（`AGENTS.md`）继续保持软链接一致（pi 的上下文文件没有 include 机制，超集只能靠复制、复制必然漂移）；能力层（`.pi/`）改在子项目里建真实目录，用 `settings.json` 以**路径引用** Agent 项目的资源目录，本地专属内容放自己的目录——行为上是超集，结构上无副本、不漂移。
