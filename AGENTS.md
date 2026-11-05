@@ -1,1 +1,1 @@
-../ExecutiveAssistantAgent/AGENTS.md
+../FullStackEngineerAgent/AGENTS.md

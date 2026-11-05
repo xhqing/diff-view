@@ -1,18 +1,18 @@
 {
   "extensions": [
-    "~/Developer/ExecutiveAssistantAgent/.pi/extensions",
+    "~/Developer/FullStackEngineerAgent/.pi/extensions",
     "./extensions"
   ],
   "skills": [
-    "~/Developer/ExecutiveAssistantAgent/.pi/skills",
+    "~/Developer/FullStackEngineerAgent/.pi/skills",
     "./skills"
   ],
   "prompts": [
-    "~/Developer/ExecutiveAssistantAgent/.pi/prompts",
+    "~/Developer/FullStackEngineerAgent/.pi/prompts",
     "./prompts"
   ],
   "themes": [
-    "~/Developer/ExecutiveAssistantAgent/.pi/themes",
+    "~/Developer/FullStackEngineerAgent/.pi/themes",
     "./themes"
   ]
 }
