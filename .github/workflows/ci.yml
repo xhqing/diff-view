@@ -1,9 +1,9 @@
 # CI —— 检查与回归防护（每次 PR、每次 main push 都跑）
 # 检查项：
-#   1. JS 语法检查（diff-view-vsce 全部 .js）
-#   2. shell 脚本语法（install.sh / build.sh）
-#   3. 版本号一致性（VERSION 是唯一权威：VERSION ↔ package.json / CHANGELOG / README 徽章）
-#   4. 产物构建冒烟（build.sh 产出唯一产物 zip：内含 vsix + pi 扩展文件，共用同一版本号）
+#   1. TypeScript 语法（与 pi 加载器同口径：Node 类型擦除）
+#   2. shell 脚本语法（install.sh）
+#   3. 版本号一致性（VERSION 是唯一权威：VERSION ↔ CHANGELOG ↔ 中英 README 徽章）
+#   4. 结构冒烟（唯一实现文件存在、install.sh 可执行、扩展注册了预期命令）
 
 name: CI
 
@@ -21,27 +21,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: JS syntax check (diff-view-vsce)
-        run: find diff-view-vsce -name '*.js' -not -path '*/node_modules/*' -exec node --check {} +
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      - name: Shell scripts syntax
-        run: bash -n install.sh && bash -n build.sh
+      - name: TypeScript syntax (same parser as pi's loader)
+        run: node --experimental-strip-types --check diff-view.ts
+
+      - name: Shell script syntax
+        run: bash -n install.sh
 
       - name: Version consistency (VERSION is the single source of truth)
         run: |
           V="$(tr -d '[:space:]' < VERSION)"
-          PKG="$(node -p "require('./diff-view-vsce/package.json').version")"
           CL="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
-          BD="$(grep -m1 -oE 'Version-[0-9]+\.[0-9]+\.[0-9]+' README.md | cut -d- -f2)"
-          echo "VERSION=$V package.json=$PKG changelog=$CL readme-badge=$BD"
-          [ "$V" = "$PKG" ] && [ "$V" = "$CL" ] && [ "$V" = "$BD" ] || { echo "版本号不一致"; exit 1; }
+          BD_EN="$(grep -m1 -oE 'Version-[0-9]+\.[0-9]+\.[0-9]+' README.md | cut -d- -f2)"
+          BD_CN="$(grep -m1 -oE 'Version-[0-9]+\.[0-9]+\.[0-9]+' README_cn.md | cut -d- -f2)"
+          echo "VERSION=$V changelog=$CL readme.en=$BD_EN readme.cn=$BD_CN"
+          [ "$V" = "$CL" ] && [ "$V" = "$BD_EN" ] && [ "$V" = "$BD_CN" ] || { echo "版本号不一致"; exit 1; }
 
-      - name: Build artifact smoke test (single zip, both halves, shared version)
+      - name: Structure smoke test
         run: |
-          command -v zip >/dev/null || sudo apt-get install -y zip
-          ./build.sh
-          V="$(tr -d '[:space:]' < VERSION)"
-          ls -lh dist/
-          test -f "dist/diff-view-$V.zip"
-          unzip -l "dist/diff-view-$V.zip" | grep -q "diff-view-vsce-$V.vsix"
-          unzip -l "dist/diff-view-$V.zip" | grep -q "diff-view.ts"
+          test -f diff-view.ts
+          test -x install.sh
+          grep -q 'registerCommand("open-diff"' diff-view.ts
+          grep -q 'registerCommand("close-diff"' diff-view.ts
+          grep -q 'name: "open_diff"' diff-view.ts
+          grep -q 'name: "close_diff"' diff-view.ts

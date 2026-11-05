@@ -2,31 +2,24 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-0.2.1-blue)](CHANGELOG.md)
-  [![Type](https://img.shields.io/badge/Type-pi%20%2B%20VS%20Code-6E56CF)](#)
+  [![Version](https://img.shields.io/badge/Version-1.0.0-blue)](CHANGELOG.md)
+  [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
+  [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
   [English](README.md)
 </div>
 
 # diff-view
 
-> ⚠️ **已注销（2026-10-31）**：本套件已停用——两个扩展（pi 侧 `diff-view-pie`、VSCode 侧 `diff-view-vsce`）已从用户机器卸载，快照状态目录也已清理。需要查看 AI 改动时，改用 `add-mode` / `commit-mode` 暂停自动提交，再直接 `git diff` / `git diff --cached`。仓库保留作存档，不再维护。
+> 在 cmux 里用两条斜杠命令看 diff：`/open-diff` 打开，`/close-diff` 关闭。
 
-> 独立于 git 的文件 diff 查看器，横跨 pi 与 VS Code —— 两个扩展、一个功能。
+这是 pi 的一个扩展。它自己**不渲染 diff**——cmux（基于 Ghostty 的终端应用）自带 diff viewer，`cmux diff` 能把 git 改动直接渲染成面板，`cmux close-surface` 能把面板关掉。本扩展只负责把它们包成顺手的两条命令，并记住「哪些面板是自己开的」，好让关闭动作精确、不误伤。
 
-**diff-view 由两个扩展组成，两个都安装才是完整功能：**
+## 为什么需要它
 
-| 组件 | 安装位置 | 职责 |
-|---|---|---|
-| `diff-view-pie` | pi（全局扩展：`~/.pi/agent/extensions/`） | 在 pi 里注册 diff 工具与命令：`open_diff` / `close_diff`、`/open-diff` / `/close-diff`，以及跨会话变更通知。 |
-| `diff-view-vsce` | VS Code（VSIX） | 承担 VS Code 侧的实际动作：静默关闭由 pi 打开的 diff 标签（VS Code 没有从外部关标签的官方接口）。 |
-
-为什么要拆成两半：pi 能「打开」diff 视图、也想按需「关闭」它，但 VS Code 没有从编辑器外部关闭标签的官方途径（CLI 无此子命令、AppleScript 查不了窗口、UI 脚本会抢焦点）。于是两侧通过一套「请求文件 + 确认文件」的小协议协作——见「工作原理」。
-
-只装一半会怎样：
-
-- 只装 pi 侧 → `/open-diff` 可用，但 `/close-diff` 会如实报告「没有窗口响应」（没人能关标签）；
-- 只装 VS Code 侧 → 没有东西驱动它，无 diff 可关。
+- 光标停在 pi 会话里时，想快速看一眼「AI 刚才改了什么」，敲 `/open-diff` 就行，不用切窗口、不用记 `cmux diff` 的参数；
+- AI 也能调用 `open_diff` / `close_diff` 两个工具，在需要给你看改动时自己开、看完自己关；
+- 关闭只针对本扩展登记过的面板，用户自己开的 diff、普通终端、其它面板一律不碰。
 
 ## 安装
 
@@ -34,60 +27,65 @@
 ./install.sh
 ```
 
-脚本一次装好两个组件；装完：
+脚本把 `diff-view.ts` 拷到 `~/.pi/agent/extensions/diff-view.ts`。新会话自动生效；已经打开的 pi 会话执行 `/reload`。
 
-- pi 侧：新会话自动生效（正在跑的会话里执行 `/reload` 亦可）；
-- VS Code 侧：**重载 VS Code 窗口**（命令面板 → `Developer: Reload Window`），新扩展才会启用。
+要求：macOS + cmux 正在运行（面板由 cmux 渲染，扩展只是命令层）。卸载删掉那个文件即可。
 
-手动安装：
+## 用法
 
-1. **pi 侧** —— 把 `diff-view-pie/diff-view.ts` 拷进 `~/.pi/agent/extensions/`；
-2. **VS Code 侧** —— 跑 `./build.sh`，解压 `dist/diff-view-<version>.zip`，然后 `code --install-extension diff-view-vsce-<version>.vsix --force`（若还装着旧身份 `xhqing.diff-bridge`，先卸载）。
+```
+/open-diff                  打开当前仓库的 diff（有 last-turn 基线就用 last turn，否则 unstaged）
+/open-diff last-turn        只看这一轮 AI 改动
+/open-diff unstaged         工作区相对 HEAD 的全部改动
+/open-diff staged           暂存区相对 HEAD 的改动
+/open-diff branch           当前分支相对基线的改动
+/open-diff ~/Developer/x    打开指定仓库的 diff
 
-想直接用已发布的构建？从[最新 Release](https://github.com/xhqing/diff-view/releases) 下载 `diff-view-<version>.zip`，按同样的两步安装它的两个组件。
-
-## 构建与发布产物
-
-```bash
-./build.sh
+/close-diff                 关闭本会话打开的面板
+/close-diff --all           关闭所有会话打开的面板
+/close-diff ~/Developer/x   只关该仓库的面板
 ```
 
-产出**唯一**发布产物到 `dist/`，版本号取自项目版本（`VERSION` 是唯一权威——两个组件共用同一个版本号）：
+四个来源的差别：
 
-- `dist/diff-view-<version>.zip`，内含：
-  - `diff-view-vsce-<version>.vsix` —— VS Code 侧（用 `code --install-extension <vsix> --force` 安装）；
-  - `diff-view.ts` —— pi 侧（拷进 `~/.pi/agent/extensions/`）。
+| 来源 | 看的是什么 | 何时可用 |
+|---|---|---|
+| `last-turn` | 这一轮 agent 提示词提交之前的基线（`git stash create` + untracked 快照）到现在 | cmux 的 pi hook 记录过当前会话的基线 |
+| `unstaged` | 工作区相对 HEAD 的全部改动 | 始终可用（默认后备） |
+| `staged` | 暂存区相对 HEAD 的改动 | 始终可用 |
+| `branch` | 当前分支相对基线分支的改动 | 始终可用（基线由 cmux 自己挑） |
 
-从产物安装同样是「两个都要装」的两步。已发布的构建见 [GitHub Releases](https://github.com/xhqing/diff-view/releases)。
-
-## 使用
-
-- pi 里：
-  - `/open-diff`（或 `open_diff` 工具）—— 打开 diff 视图（左：改动前快照、右：当前内容）；
-  - `/close-diff` 关闭全部由 pi 打开的 diff；`/close-diff <文件路径>` 只关该文件的（也可用 `close_diff` 工具）。
-- VS Code 里：命令面板 → `diff-view-vsce: 关闭全部由 pi 打开的 diff 标签`（手动兜底）；日志见 `diff-view-vsce` 输出渠道。
+AI 侧对应两个工具：`open_diff`（参数 `source` / `path`，**不抢焦点**）和 `close_diff`（参数 `path` / `all`）。你手敲斜杠命令时会切到面板，AI 调工具时不会——抢不抢焦点按「谁发起的」区分。
 
 ## 工作原理
 
-- pi 侧为被跟踪文件登记「改动前快照」，并可按需打开 diff 视图；
-- 关闭时，pi 侧把请求文件写到 `~/.pi/agent/state/ai-edit-diff/close-requests/`；
-- `diff-view-vsce` 在**每个 VS Code 窗口内**每秒轮询该目录，只关闭**左侧为 pi 快照**的 diff 标签——你自己开的对比视图与普通编辑器一概不动；关闭用 `preserveFocus`，不抢焦点；
-- 每个窗口回写确认（`close-acks/`），pi 侧汇总结果回报给你。
+1. `/open-diff` 解析出仓库根和来源；
+2. 调 `cmux diff --<source> --cwd <仓库>`（AI 调用时加 `--no-focus`）；
+3. 从输出里取面板引用（`OK surface=surface:... pane=...`），记进 `~/.pi/agent/state/cmux-diff/opened.json`；
+4. `/close-diff` 读这份登记，逐个 `cmux close-surface --surface <ref>`；面板若已被你手动关掉（`Surface ref not found`）按已关闭处理，顺便清理登记。
 
-## 安全边界
+cmux 的 socket 路径偶有变化（app 重启后环境变量可能过期）：扩展先用默认解析，失败再拿 `CMUX_SOCKET` / `CMUX_SOCKET_PATH` 和 `~/Library/Application Support/cmux/*-last-socket-path` 里的候选路径重试。
 
-- 只会关闭「左侧 = pi 改动前快照」的标签；
-- 不强行执行：超过 30 秒的陈旧请求直接忽略；请求 / 确认文件定期清理；
-- VS Code 侧缺失时，pi 侧会如实报告，不静默失败。
+## 已知边界
+
+- **只服务 cmux**：不在 cmux 里跑（app 没开、或终端不是从 cmux 启动）时会直接报错，不会假装成功。
+- **面板内切 source 是 cmux 上游的坑**：cmux 的 diff 面板里有个 source 切换器，点「Last turn」不会真正重算（其 sidecar 不支持 last-turn 作为可切换来源），只会停在原内容并一直转圈。要看 last-turn，请用 `/open-diff last-turn` 重新开一个面板，不要在旧面板里切。
+- **last-turn 依赖基线**：基线按「仓库 + workspace + surface + 会话」四条匹配，任何一条对不上就拿不到内容。这时 `/open-diff` 会自动退回 `unstaged` 并告诉你原因。
+- **不记录历史快照**：原 VSCode 版会给每次文件编辑留「改动前快照」，可以逐步回放，代价是状态目录涨到约 925 MB。cmux 版直接复用 git 的 diff 能力，不落任何快照。
+
+## 项目沿革
+
+- 2026-10-11：作为「AI 改动可视化 + 跨会话变更通知」扩展建立（原名 `ai-edit-diff`）。
+- 2026-10-18：整合为 `diff-view`（pi 侧 `diff-view-pie` + VS Code 侧 `diff-view-vsce`）。
+- 2026-10-31：注销——改用 `add-mode` / `commit-mode` 暂停自动提交后直接 `git diff`，快照目录约 925 MB 也成了负担。
+- 2026-11-05：改建为 cmux 版（1.0.0）——去掉快照与通知机制，只保留 `/open-diff` / `/close-diff` 的顺手体验，diff 内容交给 cmux 渲染。
 
 ## 开发
 
-- pi 侧源码：`diff-view-pie/diff-view.ts` —— 用 `./install.sh` 部署（部署副本在 `~/.pi/agent/extensions/diff-view.ts`，勿直接改副本）；
-- VS Code 侧源码：`diff-view-vsce/` —— `npm run check` 做全部 JS 语法检查；
-- 运行时状态（两侧共享的协议目录）：`~/.pi/agent/state/ai-edit-diff/` —— 名字为兼容而保留，它是两个组件之间的协议契约。
+- 源文件：`diff-view.ts`（唯一实现，部署副本由 `install.sh` 拷贝，勿直接改副本）；
+- 状态目录：`~/.pi/agent/state/cmux-diff/`（面板登记，删掉不影响功能，只是丢失关闭记录）；
+- 语法自检：`node --experimental-strip-types --check` 与 pi 加载器口径一致，扩展写坏会让 pi 起不来。
 
-## 版权与署名
+## License
 
-Copyright (c) 2026 All Contributors。基于 [MIT License](LICENSE.md) 发布。
-
-署名：使用或引用本项目时，请保留版权声明并注明来源：[diff-view](https://github.com/xhqing/diff-view)。
+Copyright (c) 2026 All Contributors. 以 [MIT License](LICENSE.md) 发布。

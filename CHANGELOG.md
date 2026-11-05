@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-11-05
+
+### 变更（架构重写：VSCode 双组件 → cmux 单扩展）
+
+- **为什么**：用户 2026-11-05 要求「把 diff-view 改成适用于 cmux 的版本，只要 `/open-diff` / `/close-diff` 两条斜杠命令就够」。cmux 自带 diff viewer（`cmux diff` 渲染面板、`cmux close-surface` 关面板），原方案里「抓改动前快照 + VSCode 侧静默关标签」的两半组合已失去意义：快照目录曾涨到约 925 MB，而 cmux 的 `--last-turn` 基线直接给出了「这一轮 AI 改了什么」。
+- **改了什么**：项目重写为单一 pi 扩展 `diff-view.ts`——注册 `/open-diff`、`/close-diff` 两条命令与 `open_diff`、`close_diff` 两个工具；打开时调 `cmux diff --<source> --cwd <仓库>`，从输出解析面板引用并登记到 `~/.pi/agent/state/cmux-diff/opened.json`；关闭时按登记逐个 `cmux close-surface`，已被手动关掉的面板按已关闭处理并清理登记。支持四种来源：`last-turn`（这一轮 AI 改动）、`unstaged`（默认后备）、`staged`、`branch`；来源省略时自动判断（有本轮基线用 last-turn，否则 unstaged）。
+- **关闭的作用域**：默认只关本会话打开的面板，`--all` 关全部，给路径只关该仓库——不碰用户自己开的面板与终端。
+- **焦点策略**：手敲斜杠命令切到面板；AI 调工具时传 `--no-focus`，不打断用户。
+- **socket 自愈**：cmux app 重启后环境变量里的 socket 可能过期，扩展在默认解析失败后会拿 `CMUX_SOCKET` / `CMUX_SOCKET_PATH` 与 `~/Library/Application Support/cmux/*-last-socket-path` 的候选路径重试。
+- **移除**：`diff-view-pie/`、`diff-view-vsce/`、`build.sh`（不再有 VSIX 产物与「请求文件 + 确认文件」协议），以及快照 / 镜像 / 跨会话变更通知那一整套机制（根因见上：内容交给 cmux，本扩展不做文件跟踪）。
+- **验证**：用 jiti 加载扩展、mock pi API 跑通九个场景——自动 source、显式 staged、不存在的路径、非 git 目录、非法 source、`/close-diff` 关本会话、重复关闭提示、`/open-diff last-turn`、`/close-diff --all`；真实 cmux 面板的打开与关闭均成功。
+- **已知边界**（记入 README）：cmux 面板内的 source 切换器切「Last turn」不生效（其 sidecar 不支持 last-turn 作为可切换来源，属上游问题），要看 last-turn 请用 `/open-diff last-turn` 重开面板。
+
 ## [未发布]
 
 ### 注销（2026-10-31 用户决定，功能停用）
