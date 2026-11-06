@@ -21,6 +21,10 @@
  *
  * 部署：本文件是 diff-view 项目的 pi 扩展；安装脚本把副本拷到
  * ~/.pi/agent/extensions/diff-view.ts（勿直接改副本）。新会话自动生效，已开会话用 /reload。
+ *
+ * 窗口路由冲突：cmux diff 会把两个 CMUX_* 环境变量同时当成面板路由选择器，某些窗口布局下
+ * 两者互相矛盾，cmux 会直接拒绝打开面板。openDiff() 检测到后去掉这两个选择器重试，
+ * last-turn 相应退到 unstaged（详见 CHANGELOG 与 README「已知边界」）。
  */
 
 import * as fs from "node:fs";
@@ -72,13 +76,19 @@ interface RunResult {
   error?: string;
 }
 
-/** 跑一条命令，永不抛错；调用方只看 ok / stderr。 */
-function run(command: string, args: string[], cwd?: string, timeoutMs = 30_000): Promise<RunResult> {
+/** 跑一条命令，永不抛错；调用方只看 ok / stderr。env 可覆盖，用于去掉冲突的路由选择器。 */
+function run(
+  command: string,
+  args: string[],
+  cwd?: string,
+  timeoutMs = 30_000,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RunResult> {
   return new Promise((resolve) => {
     execFile(
       command,
       args,
-      { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: process.env },
+      { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env },
       (error: any, stdout: string, stderr: string) => {
         const code = typeof error?.code === "number" ? error.code : error ? null : 0;
         resolve({
@@ -137,10 +147,15 @@ function socketCandidates(): string[] {
  * 先用默认 socket 解析（cmux 会自己找最新的 marker 文件）；失败再拿候选 socket 逐个重试——
  * 覆盖「环境变量里的 socket 已随 app 重启失效」这种情况。
  */
-async function runCmux(args: string[], cwd?: string, timeoutMs = 60_000): Promise<RunResult> {
+async function runCmux(
+  args: string[],
+  cwd?: string,
+  timeoutMs = 60_000,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RunResult> {
   let last: RunResult | null = null;
   for (const command of cmuxCandidates()) {
-    const first = await run(command, args, cwd, timeoutMs);
+    const first = await run(command, args, cwd, timeoutMs, env);
     if (first.ok) return first;
     // 命令行本身不存在（ENOENT）就不用再试 socket 了，换下一个候选
     if (first.code === null && /ENOENT/.test(first.error ?? "")) {
@@ -150,12 +165,23 @@ async function runCmux(args: string[], cwd?: string, timeoutMs = 60_000): Promis
     last = first;
     if (!/socket|pipe|connect|Connection/i.test(first.stderr + (first.error ?? ""))) continue;
     for (const socketPath of socketCandidates()) {
-      const retried = await run(command, ["--socket", socketPath, ...args], cwd, timeoutMs);
+      const retried = await run(command, ["--socket", socketPath, ...args], cwd, timeoutMs, env);
       if (retried.ok) return retried;
       last = retried;
     }
   }
   return last ?? { ok: false, stdout: "", stderr: "cmux 命令不可用", code: null };
+}
+
+/**
+ * 是不是 cmux 的 Dock 路由冲突。
+ *
+ * cmux diff 会把 CMUX_WORKSPACE_ID 与 CMUX_SURFACE_ID 一起当成面板路由选择器交给
+ * browser.open_split。当终端本身在 Dock 里、或这两个环境变量与当前窗口对不上时，服务端
+ * 认为「两个选择器互相矛盾」，直接回 invalid_params，面板一个也开不出来。
+ */
+function isDockRoutingConflict(result: RunResult): boolean {
+  return /Conflicting Dock routing selectors/i.test(`${result.stderr}\n${result.error ?? ""}`);
 }
 
 /** cmux 是否在线：能列出窗口就说明 app 在跑、socket 通。 */
@@ -329,17 +355,41 @@ async function openDiff(options: OpenOptions): Promise<OpenResult> {
     autoNote = "（没有本轮的 last-turn 基线，自动用 unstaged）";
   }
 
-  const args = ["diff", `--${source}`, "--cwd", root];
-  if (!options.focus) args.push("--no-focus");
+  const buildArgs = (chosen: DiffSource): string[] => {
+    const list = ["diff", `--${chosen}`, "--cwd", root];
+    if (!options.focus) list.push("--no-focus");
+    return list;
+  };
 
-  const result = await runCmux(args, root);
+  let result = await runCmux(buildArgs(source), root);
+  let retriedAfterConflict = false;
+  if (!result.ok && isDockRoutingConflict(result)) {
+    // 重试：把两个路由选择器从子进程环境里去掉，让 cmux 走默认窗口路由。
+    // last-turn 的内容依赖 CMUX_WORKSPACE_ID / CMUX_SURFACE_ID 定位基线，去掉后定位不到，
+    // 因此只能退到 unstaged（工作区全部改动）；其它来源不受影响，照原样重试。
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.CMUX_WORKSPACE_ID;
+    delete cleanEnv.CMUX_SURFACE_ID;
+    const retrySource: DiffSource = source === "last-turn" ? "unstaged" : source;
+    const retry = await runCmux(buildArgs(retrySource), root, 60_000, cleanEnv);
+    retriedAfterConflict = true;
+    if (retry.ok) {
+      const downgraded = retrySource !== source;
+      result = retry;
+      source = retrySource;
+      autoNote = downgraded
+        ? "（cmux 窗口路由冲突，已退到 unstaged；本轮 last-turn 暂不可用）"
+        : "（cmux 窗口路由冲突，已改用默认窗口路由重新打开）";
+    }
+  }
   if (!result.ok) {
     const detail = (result.stderr || result.error || "").trim();
+    const retryNote = retriedAfterConflict ? "\n（已尝试去掉 workspace / surface 选择器重试，仍然失败）" : "";
     return {
       ok: false,
       message:
         `cmux diff 失败（source=${source}）。\n` +
-        `${detail || "（无输出）"}\n` +
+        `${detail || "（无输出）"}${retryNote}\n` +
         "如果提示 socket 相关错误，确认 cmux app 正在运行。",
     };
   }
