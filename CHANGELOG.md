@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [未发布]
+## [1.0.3] - 2026-11-06
 
 ### 变更（撤回临时 patch 中转，根因改在 cmux CLI 源码修复）
 
