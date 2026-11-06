@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [未发布]
+## [1.0.2] - 2026-11-06
 
 ### 修复（窗口路由冲突不再降级，last-turn 内容原样保留）
 
