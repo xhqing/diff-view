@@ -22,9 +22,9 @@
  * 部署：本文件是 diff-view 项目的 pi 扩展；安装脚本把副本拷到
  * ~/.pi/agent/extensions/diff-view.ts（勿直接改副本）。新会话自动生效，已开会话用 /reload。
  *
- * 窗口路由冲突：cmux diff 会把两个 CMUX_* 环境变量同时当成面板路由选择器，某些窗口布局下
- * 两者互相矛盾，cmux 会直接拒绝打开面板。openDiff() 检测到后捡回 cmux 已经算好的 patch，
- * 去掉这两个选择器重开面板，来源与内容都不变；拿不到 patch 才退到 unstaged
+ * 窗口路由冲突：根因已在 cmux CLI 源码修复（不再把 caller context 注入面板路由）。
+ * 对尚未更新的旧版 app，openDiff() 仍保留一段极简兼容：命中冲突时去掉两个选择器重试，
+ * last-turn 暂时退到 unstaged；不再依赖任何临时 patch 文件
  *（详见 CHANGELOG 与 README「已知边界」）。
  */
 
@@ -52,14 +52,6 @@ const SOURCE_LABELS: Record<DiffSource, string> = {
   unstaged: "unstaged（未暂存改动）",
   staged: "staged（已暂存改动）",
   branch: "branch（分支改动）",
-};
-
-/** 用 patch 重开面板时给 cmux 的标题，让面板标题与来源对得上。 */
-const SOURCE_TITLES: Record<DiffSource, string> = {
-  "last-turn": "Last turn diff",
-  unstaged: "Unstaged diff",
-  staged: "Staged diff",
-  branch: "Branch diff",
 };
 
 interface OpenedPanel {
@@ -189,6 +181,7 @@ async function runCmux(
  * browser.open_split。当终端本身在 Dock 里、或这两个环境变量与当前窗口对不上时，服务端
  * 认为「两个选择器互相矛盾」，直接回 invalid_params，面板一个也开不出来；同一类异常请求
  * 有时也会把 socket 直接掐断（Broken pipe / Socket closed before reply），一并重试。
+ * cmux CLI 源码修好后这段只会在旧版 app 上命中。
  */
 function shouldRetryWithoutRouting(result: RunResult): boolean {
   const text = `${result.stderr}\n${result.error ?? ""}`;
@@ -196,51 +189,6 @@ function shouldRetryWithoutRouting(result: RunResult): boolean {
     /Conflicting Dock routing selectors/i.test(text) ||
     /Broken pipe|Socket closed before reply|Failed to write to socket/i.test(text)
   );
-}
-
-/**
- * cmux 写 diff viewer 页面与 patch 的临时目录（CLI 的 diffViewerDirectory() 固定用 /tmp）。
- *
- * `--last-turn` 走同步生成路径：就算 browser.open_split 被 Dock 路由拒绝，算好的 patch
- * 也已经落盘。我们把这个 patch 捡回来，换一条不冲突的路径重开面板，内容就不丢。
- */
-function diffViewerDir(): string {
-  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-  return path.join("/tmp", `cmux-diff-viewer-${uid}`);
-}
-
-/** 列出目录里已有的 patch 文件；目录不存在时返回空集合。 */
-function patchNames(dir: string): Set<string> {
-  try {
-    return new Set(fs.readdirSync(dir).filter((name) => name.endsWith("-viewer.patch")));
-  } catch {
-    return new Set();
-  }
-}
-
-/**
- * 找出这次 cmux diff 调用新写出的、非空的 patch。
- *
- * 只认「调用前没有、调用期间新增、大小非 0」的文件，并按修改时间取最新一个——避免把
- * 其它会话同时打开的 diff 面板算进来。
- */
-function findReplayPatch(dir: string, before: Set<string>, startedAt: number): string | null {
-  try {
-    const candidates = fs
-      .readdirSync(dir)
-      .filter((name) => name.endsWith("-viewer.patch") && !before.has(name))
-      .map((name) => {
-        const full = path.join(dir, name);
-        return { full, stat: fs.statSync(full) };
-      })
-      .filter(
-        (item) => item.stat.isFile() && item.stat.size > 0 && item.stat.mtimeMs >= startedAt - 2_000,
-      )
-      .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
-    return candidates[0]?.full ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** 去掉会让 cmux Dock 路由判定互相矛盾的两个选择器。 */
@@ -428,41 +376,22 @@ async function openDiff(options: OpenOptions): Promise<OpenResult> {
     return list;
   };
 
-  const viewerDir = diffViewerDir();
-  const patchesBefore = patchNames(viewerDir);
-  const startedAt = Date.now();
   let result = await runCmux(buildArgs(source), root);
   let retriedAfterConflict = false;
-  let replayedPatch = false;
   if (!result.ok && shouldRetryWithoutRouting(result)) {
+    // 根因已在 cmux CLI 源码修复（不再把 caller context 注进面板路由）。这段只服务于
+    // 尚未更新的旧版 app：去掉两个冲突的环境变量重试，让 cmux 走默认窗口路由；
+    // last-turn 依赖它们定位基线，因此旧 CLI 下暂时退到 unstaged。
+    const retrySource: DiffSource = source === "last-turn" ? "unstaged" : source;
+    const retry = await runCmux(buildArgs(retrySource), root, 60_000, cleanRoutingEnv());
     retriedAfterConflict = true;
-    const cleanEnv = cleanRoutingEnv();
-    const replayPatch = findReplayPatch(viewerDir, patchesBefore, startedAt);
-    if (replayPatch) {
-      // 用 cmux 已经算好的本轮 patch 重开：内容仍是原来源，只是换一条不冲突的打开路径。
-      // patch 文件本身由 cmux 生成，不需要我们再复刻 last-turn 的基线算法。
-      const replayArgs = ["diff", replayPatch, "--cwd", root, "--title", SOURCE_TITLES[source]];
-      if (!options.focus) replayArgs.push("--no-focus");
-      const replay = await runCmux(replayArgs, root, 60_000, cleanEnv);
-      if (replay.ok) {
-        result = replay;
-        replayedPatch = true;
-        autoNote = "（cmux 窗口路由冲突，已用 cmux 算好的本轮 patch 重新打开；来源不变）";
-      }
-    }
-    if (!replayedPatch) {
-      // patch 没拿到（例如 cmux 换了临时目录布局，或该来源的 patch 是异步生成的）→
-      // 退到不依赖基线的打开方式，保证面板至少能开。
-      const retrySource: DiffSource = source === "last-turn" ? "unstaged" : source;
-      const retry = await runCmux(buildArgs(retrySource), root, 60_000, cleanEnv);
-      if (retry.ok) {
-        const downgraded = retrySource !== source;
-        result = retry;
-        source = retrySource;
-        autoNote = downgraded
-          ? "（cmux 窗口路由冲突，本轮 patch 没取到，暂时退到 unstaged）"
-          : "（cmux 窗口路由冲突，已改用默认窗口路由重新打开）";
-      }
+    if (retry.ok) {
+      const downgraded = retrySource !== source;
+      result = retry;
+      source = retrySource;
+      autoNote = downgraded
+        ? "（旧版 cmux CLI 的窗口路由冲突，暂时退到 unstaged）"
+        : "（旧版 cmux CLI 的窗口路由冲突，已改用默认窗口路由重新打开）";
     }
   }
   if (!result.ok) {
