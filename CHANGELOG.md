@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file.
 - **验证**：用 jiti 加载扩展、mock pi API 跑通九个场景——自动 source、显式 staged、不存在的路径、非 git 目录、非法 source、`/close-diff` 关本会话、重复关闭提示、`/open-diff last-turn`、`/close-diff --all`；真实 cmux 面板的打开与关闭均成功。
 - **已知边界**（记入 README）：cmux 面板内的 source 切换器切「Last turn」不生效（其 sidecar 不支持 last-turn 作为可切换来源，属上游问题），要看 last-turn 请用 `/open-diff last-turn` 重开面板。
 
-## [未发布]
+## [1.0.1] - 2026-11-06
 
 ### 修复（cmux 的 Dock 路由冲突导致 `/open-diff` 完全打不开面板）
 
