@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-11-06
+
+### 修复（cmux 的 Dock 路由冲突导致 `/open-diff` 完全打不开面板）
+
+- **为什么**：2026-11-06 用户实测 `/open-diff` 报 `Error: invalid_params: Conflicting Dock routing selectors`（source=last-turn），面板一个也开不出来。根因在 cmux：`cmux diff` 会把 `CMUX_WORKSPACE_ID` 与 `CMUX_SURFACE_ID` 一起作为 `workspace_id` / `surface_id` 路由选择器交给 `browser.open_split`；当终端在 Dock 里、或这两个环境变量与当前窗口对不上时，服务端的 Dock 路由判定认为两个选择器互相矛盾，直接拒绝创建面板。本机实测复现：`cmux diff --workspace <普通 workspace id>` 必现冲突，把 workspace 换成当前窗口 id、或干脆不带选择器就正常。
+- **改了什么**：`diff-view.ts` 加入冲突检测与自动重试——首次调用若返回 `Conflicting Dock routing selectors`，就从子进程环境里去掉 `CMUX_WORKSPACE_ID` / `CMUX_SURFACE_ID` 再调一次，让 cmux 走默认窗口路由。`last-turn` 的内容定位依赖这两个值，因此这种情况下退到 `unstaged`（工作区全部改动）并在提示里写明；`unstaged` / `staged` / `branch` 保持用户要的来源不变。`run()` / `runCmux()` 增加可选的 env 参数以支持覆盖；两次都失败时保留原始错误，并注明已经重试过。
+- **验证**：用 mock pi API 加载扩展、接真实 cmux 跑三个场景——`/open-diff last-turn`（冲突 → 降级 unstaged → 面板打开）、`/open-diff staged`（冲突 → 保留来源重试 → 面板打开）、`/close-diff --all`（两个面板都关掉）；`node --experimental-strip-types --check` 语法检查通过。
+- **边界**：重试时不带选择器，多窗口场景下面板会开在 cmux 的默认窗口；上游修好路由冲突后应去掉这段降级（见 TODO T3）。
+
 ## [1.0.0] - 2026-11-05
 
 ### 变更（架构重写：VSCode 双组件 → cmux 单扩展）
@@ -16,13 +25,6 @@ All notable changes to this project will be documented in this file.
 - **已知边界**（记入 README）：cmux 面板内的 source 切换器切「Last turn」不生效（其 sidecar 不支持 last-turn 作为可切换来源，属上游问题），要看 last-turn 请用 `/open-diff last-turn` 重开面板。
 
 ## [未发布]
-
-### 修复（cmux 的 Dock 路由冲突导致 `/open-diff` 完全打不开面板）
-
-- **为什么**：2026-11-06 用户实测 `/open-diff` 报 `Error: invalid_params: Conflicting Dock routing selectors`（source=last-turn），面板一个也开不出来。根因在 cmux：`cmux diff` 会把 `CMUX_WORKSPACE_ID` 与 `CMUX_SURFACE_ID` 一起作为 `workspace_id` / `surface_id` 路由选择器交给 `browser.open_split`；当终端在 Dock 里、或这两个环境变量与当前窗口对不上时，服务端的 Dock 路由判定认为两个选择器互相矛盾，直接拒绝创建面板。本机实测复现：`cmux diff --workspace <普通 workspace id>` 必现冲突，把 workspace 换成当前窗口 id、或干脆不带选择器就正常。
-- **改了什么**：`diff-view.ts` 加入冲突检测与自动重试——首次调用若返回 `Conflicting Dock routing selectors`，就从子进程环境里去掉 `CMUX_WORKSPACE_ID` / `CMUX_SURFACE_ID` 再调一次，让 cmux 走默认窗口路由。`last-turn` 的内容定位依赖这两个值，因此这种情况下退到 `unstaged`（工作区全部改动）并在提示里写明；`unstaged` / `staged` / `branch` 保持用户要的来源不变。`run()` / `runCmux()` 增加可选的 env 参数以支持覆盖；两次都失败时保留原始错误，并注明已经重试过。
-- **验证**：用 mock pi API 加载扩展、接真实 cmux 跑三个场景——`/open-diff last-turn`（冲突 → 降级 unstaged → 面板打开）、`/open-diff staged`（冲突 → 保留来源重试 → 面板打开）、`/close-diff --all`（两个面板都关掉）；`node --experimental-strip-types --check` 语法检查通过。
-- **边界**：重试时不带选择器，多窗口场景下面板会开在 cmux 的默认窗口；上游修好路由冲突后应去掉这段降级（见 TODO T3）。
 
 ### 注销（2026-10-31 用户决定，功能停用）
 
