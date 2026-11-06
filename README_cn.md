@@ -71,6 +71,7 @@ cmux 的 socket 路径偶有变化（app 重启后环境变量可能过期）：
 - **只服务 cmux**：不在 cmux 里跑（app 没开、或终端不是从 cmux 启动）时会直接报错，不会假装成功。
 - **面板内切 source 是 cmux 上游的坑**：cmux 的 diff 面板里有个 source 切换器，点「Last turn」不会真正重算（其 sidecar 不支持 last-turn 作为可切换来源），只会停在原内容并一直转圈。要看 last-turn，请用 `/open-diff last-turn` 重新开一个面板，不要在旧面板里切。
 - **last-turn 依赖基线**：基线按「仓库 + workspace + surface + 会话」四条匹配，任何一条对不上就拿不到内容。这时 `/open-diff` 会自动退回 `unstaged` 并告诉你原因。
+- **窗口路由冲突会自动降级**：`cmux diff` 会同时用 `CMUX_WORKSPACE_ID`、`CMUX_SURFACE_ID` 定位面板；当终端在 Dock 里、或这两个值与当前窗口对不上时，cmux 会报 `Conflicting Dock routing selectors` 并拒绝打开面板。扩展检测到这个错误会去掉这两个选择器重试：`last-turn` 因为要靠它们定位基线，只能退到 `unstaged` 并在提示里写明；`unstaged` / `staged` / `branch` 保持原来的来源。重试时面板开在 cmux 的默认窗口，开了多个窗口时可能不是发起命令的那个窗口。
 - **不记录历史快照**：原 VSCode 版会给每次文件编辑留「改动前快照」，可以逐步回放，代价是状态目录涨到约 925 MB。cmux 版直接复用 git 的 diff 能力，不落任何快照。
 
 ## 项目沿革
