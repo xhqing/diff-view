@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [未发布]
+
+### 修复（窗口路由冲突不再降级，last-turn 内容原样保留）
+
+- **为什么**：1.0.1 为了让面板在 `Conflicting Dock routing selectors` 时还能打开，把 `last-turn` 降成 `unstaged`，并在 TODO 里挂了「等上游 cmux 修好后去掉降级」（T3）。这不对：cmux 是我们自己维护的分叉，而且修复不该等任何新版本——CLI 在拒绝打开面板之前已经把本轮 patch 算好并写到临时目录，扩展自己捡回来重开即可，不需要 cmux 改一行代码。
+- **改了什么**：`openDiff()` 在调用前后比对 cmux 的 diff viewer 临时目录，找出这次新写出且非空的 patch；遇到路由冲突（以及同类请求常伴随的 socket 断连）就用这个 patch 调 `cmux diff <patch> --title <来源标题>`、去掉 `CMUX_WORKSPACE_ID` / `CMUX_SURFACE_ID` 重开面板，来源和内容都不变。找不到 patch 时才退回原来的 `unstaged` 兜底。新增 `SOURCE_TITLES` 与 `diffViewerDir()` / `patchNames()` / `findReplayPatch()` / `cleanRoutingEnv()` 四个小函数，重试触发条件也覆盖 `Broken pipe` / `Socket closed before reply`。
+- **验证**：mock pi API 加载扩展、接真实 cmux 跑三类场景——用临时基线目录（`CMUX_AGENT_HOOK_STATE_DIR`）构造一条匹配的 last-turn 基线，冲突后提示「已用 cmux 算好的本轮 patch 重新打开；来源不变」且面板打开；无基线时退回 unstaged；`staged` 冲突时保留原来源；面板都能用 `/close-diff` 关掉。`node --experimental-strip-types --check` 通过。
+- **边界**：重开依赖 cmux 把 patch 写在 `/tmp/cmux-diff-viewer-<uid>/` 且文件名以 `-viewer.patch` 结尾；将来 cmux 改了这套临时目录布局，找不到 patch 就自动走 unstaged 兜底，不会打不开面板。TODO T3 已归档（问题在本项目内解决，不再等任何上游）。
+
 ## [1.0.1] - 2026-11-06
 
 ### 修复（cmux 的 Dock 路由冲突导致 `/open-diff` 完全打不开面板）
