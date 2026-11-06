@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [未发布]
+
+### 变更（撤回临时 patch 中转，根因改在 cmux CLI 源码修复）
+
+- **为什么**：1.0.2 为了在窗口路由冲突时保住 last-turn 内容，去读 cmux 写在 `/tmp/cmux-diff-viewer-<uid>/` 的临时 patch 再重开面板。用户指出 `/tmp` 是随时会被清理的临时目录，不该拿它做依赖；而且 `xhqing/cmux` 是我们自己维护的项目，正确做法是直接改 CLI 源码，而不是在扩展里绕一圈。
+- **改了什么**：① 在 `xhqing/cmux` 的 `CLI/cmux_open.swift`（PR #20）修根因——`runDiffCommand` 不再把环境变量注入的 `CMUX_WORKSPACE_ID` / `CMUX_SURFACE_ID` 塞进 `browser.open_split` 的路由参数，只把用户显式指定的 `--window` / `--workspace` / `--surface` 用作面板目标，环境变量仍只用于定位 last-turn 基线；② 本扩展删掉 `SOURCE_TITLES`、`diffViewerDir()` / `patchNames()` / `findReplayPatch()` 与整段 patch 重放逻辑，不再读写 `/tmp` 下的任何文件；③ 对尚未更新的旧版 app 保留一段极简兼容：命中冲突或 socket 断连时去掉两个环境变量重试，`last-turn` 暂时退到 `unstaged`，等 cmux 新版本构建后这段自然不再触发。
+- **验证**：cmux 侧 `swiftc -parse CLI/cmux_open.swift` 通过；本扩展 `node --experimental-strip-types --check` 与 36 个扩展文件语法复核通过，真实 cmux 回归三场景通过；grep 确认源码里已无 `cmux-diff-viewer` / `viewer.patch` / `findReplayPatch` 等残留。
+- **边界**：当前运行的 cmux app 仍是旧 CLI 二进制（本机与 macmini 都没有完整 Xcode，源码改动要等构建/发版才进 app），因此在更新前 `/open-diff` 遇到冲突会走兼容降级；cmux 新版本里根因已消除，last-turn 直接可用。
+
 ## [1.0.2] - 2026-11-06
 
 ### 修复（窗口路由冲突不再降级，last-turn 内容原样保留）
