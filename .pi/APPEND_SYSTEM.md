@@ -1,6 +1,6 @@
-# diff-view 项目规则（Worker 追加）
+# turn-diff 项目规则（Worker 追加）
 
-你在 **diff-view** 项目里干活。本文件由 pi 在会话启动时自动追加到系统提示，只写本项目特有的规矩；Agent 的通用身份与全局规则由 `AGENTS.md` 软链接提供，此处不重述。
+你在 **turn-diff** 项目里干活。本文件由 pi 在会话启动时自动追加到系统提示，只写本项目特有的规矩；Agent 的通用身份与全局规则由 `AGENTS.md` 软链接提供，此处不重述。
 
 ## 你的角色
 
@@ -11,11 +11,15 @@
 
 ## 本项目是什么
 
-一个 **pi 扩展**：把 cmux 自带的 diff 能力（`cmux diff` / `cmux close-surface`）包装成两个斜杠命令 `/open-diff`、`/close-diff`，并记住自己打开过哪些面板，关闭时只关自己开的、绝不碰用户的面板与终端。仓库里就是单个 `diff-view.ts` + 安装脚本。
+一个 **pi 扩展 + 一个命令行工具**，只回答一个问题：「这一轮 AI 改了什么」。扩展在每轮开始时记 git 基线（`git stash create`），轮次结束时算增量并把统计 + unified diff 落盘；会话里用 `/turn-diff`、终端里用 `turn-diff` 读同一份状态。
+
+- **范围纪律**：只做「本轮 diff」。不画面板、不调外部程序、不做分支/全量对比之外的功能（全量只有 `/turn-diff head` 这一个入口）。
+- **文件**：`turn-diff.ts`（扩展本体）、`scripts/turn-diff`（命令行）、`install.sh`（部署两者）。
+- **颜色**：新增行绿底、删除行红底，行内改动片段用更亮的底色；CLI 默认只在 TTY 上色。
 
 ## 🚨 安装会写共享目录
 
-`./install.sh` 把 `diff-view.ts` 复制到 **`~/.pi/agent/extensions/diff-view.ts`**——那是全队共享的能力目录。
+`./install.sh` 把 `turn-diff.ts` 复制到 **`~/.pi/agent/extensions/turn-diff.ts`**，并把命令行装到 `~/.local/bin/turn-diff`——那是全队共享的能力目录。
 
 - 写它之前必须有一次新鲜的飞书快照（`python3 ~/.pi/agent/patch/dev-snapshots/dev-snapshots.py snapshot pi-agent`），否则会被 `snapshot-guard` 拦下。
 - 安装完要跑 `node ~/.pi/agent/patch/ts-syntax-check/check.mjs` 确认扩展语法没问题——写好一个坏扩展会让**所有会话**启动失败（pi 加载扩展失败会直接退出）。

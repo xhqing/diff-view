@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-11-07
+
+### 变更（更名 turn-diff、范围收敛为「本轮 diff」、diff 正文按改动视图上色）
+
+- **为什么**：用户裁定——(1) 仓库改名 `turn-diff`，**只做本轮 diff**，不再掺其它 diff 功能；(2) 非 git 目录的兜底方案不做（绝大多数场景都是 git 项目）；(3) diff 正文要按「改动视图」呈现：新增块绿底、删除块红底，行内真正改动的片段再高亮。
+- **改了什么**：
+  - **范围收敛**：删掉 cmux 面板相关的全部代码（`/open-diff`、`/close-diff`、`open_diff` / `close_diff` 两个工具、cmux CLI 发现与 socket 重试、last-turn 基线匹配）。扩展从 800+ 行降到 500 行左右，只剩「记基线 → 算增量 → 落盘 / 贴卡片」。
+  - **更名**：仓库 → `xhqing/turn-diff`；扩展文件 `turn-diff.ts`（部署到 `~/.pi/agent/extensions/turn-diff.ts`）；命令 `/turn-diff`；命令行 `turn-diff`（`~/.local/bin/`）；状态目录 `~/.pi/agent/state/turn-diff/`；entry 类型 `turn-diff-report`。`install.sh` 顺带删掉旧的 `diff-view.ts` 与 `diff-report`。
+  - **上色**：CLI 与卡片共用一套 256 色——新增行 `48;5;22` 绿底、删除行 `48;5;52` 红底，配 `38;5;231` 白字保证对比度；一对 `-`/`+` 行先做 token 级 LCS，只有真正变化的片段用更亮的底色（`48;5;28` / `48;5;88`）。CLI 默认只在 TTY 上色，支持 `--color auto|always|never`，并尊重 `NO_COLOR`。
+- **验证**：见下方「验证」小节（CLI 三档颜色 + 行内高亮 + 无 TTY 降级都实测过）。
+- **边界**：颜色是写死的暗色底（配白字），亮色终端下依然可读但不算原生适配；行内高亮对超长行（> 400 token）退化为整行底色。
+
 ## [1.3.0] - 2026-11-07
 
 ### 修复（`--patch` 在旧轮次上不再像报错）

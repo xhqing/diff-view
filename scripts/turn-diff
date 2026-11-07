@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""turn-diff — 打印上一个 pi 轮次里 AI 改了什么（本轮增量）。
+
+数据来自 turn-diff 扩展：它在每轮开始时记 git 基线，轮次结束时把「本轮增量」
+（统计 + unified diff）落盘成一份 JSON。这个脚本只读那份状态，不跑 pi、不触发
+任何会话，所以在任何终端里随时可以敲。
+
+用法：
+  turn-diff                   打印当前仓库上一轮的改动
+  turn-diff --patch           连同这一轮的具体改动（unified diff）一起打印
+  turn-diff --repo <路径>      指定仓库（默认当前目录所在的 git 仓库）
+  turn-diff --turn 2          看再往前一轮（1 = 最近一轮）
+  turn-diff --all             列出所有仓库各自上一轮的改动摘要
+  turn-diff --json            输出原始 JSON（给脚本用）
+  turn-diff --color <模式>     颜色：auto（默认，仅 TTY 上色）/ always / never
+
+颜色：新增行绿底、删除行红底，行内真正改动的那几个片段用更亮的底色标出来。
+退出码：0 = 有内容；1 = 没有可汇报的改动；2 = 用法 / 环境问题。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("TURN_DIFF_STATE_DIR") or (Path.home() / ".pi" / "agent" / "state" / "turn-diff"))
+STATE_FILE = STATE_DIR / "last-turn.json"
+
+KIND_MARK = {"added": "A", "deleted": "D", "renamed": "R", "modified": "M"}
+
+# 256 色：暗绿 / 亮绿 / 暗红 / 亮红 + 白字
+RESET = "\x1b[0m"
+FG = "\x1b[38;5;231m"
+ADD_BG = "\x1b[48;5;22m"
+ADD_STRONG = "\x1b[48;5;28m"
+DEL_BG = "\x1b[48;5;52m"
+DEL_STRONG = "\x1b[48;5;88m"
+ADD_FG = "\x1b[38;5;120m"
+DEL_FG = "\x1b[38;5;210m"
+
+MAX_INLINE_TOKENS = 400
+
+
+def die(message: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def use_color(choice: str) -> bool:
+    if choice == "always":
+        return True
+    if choice == "never":
+        return False
+    if os.environ.get("NO_COLOR"):
+        return False
+    return sys.stdout.isatty()
+
+
+def to_seconds(value) -> float | None:
+    """扩展用的是 JS 的 Date.now()（毫秒），这里统一折成秒。"""
+    try:
+        stamp = float(value)
+    except (TypeError, ValueError):
+        return None
+    if stamp <= 0:
+        return None
+    return stamp / 1000 if stamp > 1e11 else stamp
+
+
+def git(cwd: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+
+def repo_root(path: str) -> str | None:
+    if not os.path.isdir(path):
+        return None
+    result = git(path, "rev-parse", "--show-toplevel")
+    if result.returncode != 0:
+        return None
+    root = result.stdout.strip()
+    return os.path.realpath(root) if root else None
+
+
+def load_json(path: Path) -> dict:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return {}
+
+
+def turns_of(entry) -> list[dict]:
+    """把落盘条目归一成一串轮次（新的在前）；兼容老的「单条」结构。"""
+    if not isinstance(entry, dict):
+        return []
+    turns = entry.get("turns")
+    if isinstance(turns, list):
+        return [item for item in turns if isinstance(item, dict)]
+    if entry.get("files") is not None:
+        return [entry]
+    return []
+
+
+# ===== 彩色 patch =====
+
+
+def tokenize(line: str) -> list[str]:
+    """按「空白 / 单词 / 单个符号」切词，保留空白以便拼回原行。"""
+    import re
+
+    return re.findall(r"\s+|\w+|[^\s\w]", line)
+
+
+def inline_tokens(removed: str, added: str) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """两行之间的 token 级 LCS，返回 (删除侧片段, 新增侧片段)，bool 表示是否「真正改动」。"""
+    left, right = tokenize(removed), tokenize(added)
+    if not left or not right or len(left) > MAX_INLINE_TOKENS or len(right) > MAX_INLINE_TOKENS:
+        return [(removed, True)], [(added, True)]
+
+    table = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
+    for i in range(len(left) - 1, -1, -1):
+        for j in range(len(right) - 1, -1, -1):
+            table[i][j] = (
+                table[i + 1][j + 1] + 1 if left[i] == right[j] else max(table[i + 1][j], table[i][j + 1])
+            )
+
+    def push(items: list[tuple[str, bool]], text: str, strong: bool) -> None:
+        if items and items[-1][1] == strong:
+            items[-1] = (items[-1][0] + text, strong)
+        else:
+            items.append((text, strong))
+
+    dels: list[tuple[str, bool]] = []
+    adds: list[tuple[str, bool]] = []
+    i = j = 0
+    while i < len(left) and j < len(right):
+        if left[i] == right[j]:
+            push(dels, left[i], False)
+            push(adds, right[j], False)
+            i += 1
+            j += 1
+        elif table[i + 1][j] >= table[i][j + 1]:
+            push(dels, left[i], True)
+            i += 1
+        else:
+            push(adds, right[j], True)
+            j += 1
+    while i < len(left):
+        push(dels, left[i], True)
+        i += 1
+    while j < len(right):
+        push(adds, right[j], True)
+        j += 1
+    return dels, adds
+
+
+def paint(segments: list[tuple[str, bool]], base_bg: str, strong_bg: str, colored: bool) -> str:
+    if not colored:
+        return "".join(text for text, _ in segments)
+    return "".join(f"{FG}{strong_bg if strong else base_bg}{text}{RESET}" for text, strong in segments)
+
+
+def paint_line(text: str, bg: str, colored: bool) -> str:
+    return f"{FG}{bg}{text}{RESET}" if colored else text
+
+
+def classify(line: str) -> str:
+    import re
+
+    if (
+        line.startswith("diff ")
+        or line.startswith("index ")
+        or line.startswith("@@")
+        or re.match(r"^--- (a/|/dev/null)", line)
+        or re.match(r"^\+\+\+ (b/|/dev/null)", line)
+    ):
+        return "meta"
+    if line.startswith("+"):
+        return "add"
+    if line.startswith("-"):
+        return "del"
+    return "context"
+
+
+def render_patch(patch: str, colored: bool) -> list[str]:
+    """把 patch 渲染成带底色的行：整行绿/红底，行内改动片段用更亮的底色。"""
+    raw = patch.split("\n")
+    if raw and raw[-1] == "":
+        raw.pop()
+    out: list[str] = []
+    index = 0
+    while index < len(raw):
+        line = raw[index]
+        kind = classify(line)
+        if kind == "del":
+            dels: list[str] = []
+            while index < len(raw) and classify(raw[index]) == "del":
+                dels.append(raw[index][1:])
+                index += 1
+            adds: list[str] = []
+            lookahead = index
+            while lookahead < len(raw) and classify(raw[lookahead]) == "add":
+                adds.append(raw[lookahead][1:])
+                lookahead += 1
+            pairs = min(len(dels), len(adds))
+            for k, text in enumerate(dels):
+                if k < pairs:
+                    del_segments, _ = inline_tokens(text, adds[k])
+                    out.append(f"- {paint(del_segments, DEL_BG, DEL_STRONG, colored)}")
+                else:
+                    out.append(f"- {paint_line(text, DEL_BG, colored)}")
+            for k, text in enumerate(adds):
+                if k < pairs:
+                    _, add_segments = inline_tokens(dels[k], text)
+                    out.append(f"+ {paint(add_segments, ADD_BG, ADD_STRONG, colored)}")
+                else:
+                    out.append(f"+ {paint_line(text, ADD_BG, colored)}")
+            index = lookahead
+            continue
+        if kind == "add":
+            out.append(f"+ {paint_line(line[1:], ADD_BG, colored)}")
+            index += 1
+            continue
+        if kind == "context":
+            out.append(f"  {line[1:] if line.startswith(' ') else line}")
+            index += 1
+            continue
+        out.append(line)
+        index += 1
+    return out
+
+
+def stat_text(kind: str, added: int, deleted: int, colored: bool) -> str:
+    if kind == "deleted":
+        return f"{DEL_FG}-{deleted}{RESET}" if colored else f"-{deleted}"
+    if kind == "added":
+        return f"{ADD_FG}+{added}{RESET}" if colored else f"+{added}"
+    if not colored:
+        return f"+{added} -{deleted}"
+    return f"{ADD_FG}+{added}{RESET} {DEL_FG}-{deleted}{RESET}"
+
+
+def fmt_report(report: dict, generated_at, colored: bool) -> str:
+    files = report.get("files") or []
+    name = report.get("repoName") or "?"
+    title = f"本轮改动 · {len(files)} 个文件 · +{report.get('added', 0)} -{report.get('deleted', 0)} · {name}"
+    lines = [title]
+    width = max((len(str(item.get("path", ""))) for item in files), default=0)
+    for item in files:
+        mark = KIND_MARK.get(str(item.get("kind")), "M")
+        stat = "二进制" if item.get("binary") else stat_text(str(item.get("kind")), item.get("added", 0), item.get("deleted", 0), colored)
+        lines.append(f"  {mark} {str(item.get('path', '')).ljust(width)}  {stat}")
+    seconds = to_seconds(generated_at)
+    if seconds:
+        stamp = datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"生成于 {stamp} · {report.get('repoRoot', '')}")
+    return "\n".join(lines)
+
+
+def summarize(report: dict) -> str:
+    files = report.get("files") or []
+    return (
+        f"{report.get('repoName', '?'):<28} {len(files):>3} 个文件  "
+        f"+{report.get('added', 0):<5} -{report.get('deleted', 0):<5} {report.get('repoRoot', '')}"
+    )
+
+
+def main(argv: list[str]) -> int:
+    args = list(argv[1:])
+    as_json = "--json" in args
+    show_all = "--all" in args
+    want_patch = "--patch" in args or "-p" in args
+    color_choice = "auto"
+    if "--color" in args:
+        position = args.index("--color")
+        if position + 1 >= len(args):
+            die("--color 需要 auto / always / never")
+        color_choice = args[position + 1]
+        if color_choice not in ("auto", "always", "never"):
+            die("--color 只接受 auto / always / never")
+    for flag in args:
+        if flag.startswith("--color="):
+            color_choice = flag.split("=", 1)[1]
+    repo_arg = None
+    if "--repo" in args:
+        position = args.index("--repo")
+        if position + 1 >= len(args):
+            die("--repo 需要一个路径")
+        repo_arg = args[position + 1]
+
+    colored = use_color(color_choice)
+    state = load_json(STATE_FILE).get("repos") or {}
+
+    if show_all:
+        rows = [turns[0] for turns in (turns_of(entry) for entry in state.values()) if turns]
+        if not rows:
+            die("还没有任何仓库的轮次报告。", 1)
+        for report in sorted(rows, key=lambda item: to_seconds(item.get("generatedAt")) or 0, reverse=True):
+            print(summarize(report))
+        return 0
+
+    root = repo_root(repo_arg or os.getcwd())
+    if not root:
+        die("这里不是 git 仓库（或用 --repo 指定一个仓库路径）。")
+
+    turns = turns_of(state.get(root))
+    if not turns:
+        die("这个仓库还没有轮次报告：跑一轮带文件改动的 pi 任务后再来。", 1)
+
+    index = 0
+    if "--turn" in args:
+        position = args.index("--turn")
+        if position + 1 >= len(args):
+            die("--turn 需要一个序号（1 = 最近一轮）")
+        try:
+            index = max(0, int(args[position + 1]) - 1)
+        except ValueError:
+            die("--turn 需要一个正整数")
+    if index >= len(turns):
+        die(f"只存了最近 {len(turns)} 轮，没有第 {index + 1} 轮。", 1)
+
+    report = turns[index]
+    if as_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
+    print(fmt_report(report, report.get("generatedAt"), colored))
+    if want_patch:
+        patch = report.get("patch")
+        if not patch:
+            print()
+            print("（这一轮没有存 patch 正文：这份报告是旧版本落盘的，或本轮没有文本改动。当前工作区可以直接 `git diff`。）")
+            return 0
+        print()
+        print("\n".join(render_patch(patch, colored)))
+        if report.get("patchTruncated"):
+            print()
+            print("（patch 过长，已截断。）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
