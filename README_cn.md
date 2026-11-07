@@ -60,9 +60,12 @@
 diff-report                 当前仓库上一轮的改动
 diff-report --repo ~/x      指定仓库
 diff-report --all           每个有轮次报告的仓库各一行摘要
+diff-report --turn 2        看再往前一轮（1 = 最近一轮）
 diff-report --json          机器可读输出
 diff-report --since         用「一轮的基线 → 现在」重算（轮次结束后又改过东西时用）
 ```
+
+每个仓库保留最近 20 轮，所以 `--turn` 能翻更早的；没有文件改动的轮次也不会再把上一轮的报告冲掉。
 
 `install.sh` 会把命令行工具拷到 `~/.local/bin/diff-report`。它只读扩展落盘的报告，不启动 pi、不触发任何轮次，任何终端里随时能敲。
 

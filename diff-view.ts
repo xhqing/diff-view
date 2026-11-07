@@ -740,10 +740,26 @@ interface BaselineState {
   sessions: Record<string, TurnBaseline & { sessionId: string; capturedAt: number }>;
 }
 
+/** 落盘的一轮报告。 */
+interface StoredTurn extends ReportData {
+  sessionId: string;
+  generatedAt: number;
+}
+
+/**
+ * 每个仓库留一串轮次报告（新的在前）。
+ *
+ * 为什么是「串」而不是「一条」：没有文件改动的轮次不该把上一轮的报告冲掉——之前的
+ * 单条存储就是这么干的，于是「跑一个空轮次 → 上一轮的结果没了」。空轮次现在只记基线、
+ * 不写报告，历史自然保留。
+ */
 interface LastReportState {
   version: number;
-  repos: Record<string, ReportData & { sessionId: string; generatedAt: number }>;
+  repos: Record<string, { turns: StoredTurn[] }>;
 }
+
+/** 每个仓库最多留几轮。 */
+const MAX_STORED_TURNS = 20;
 
 /** 把本轮基线按会话 id 落盘：CLI 与手敲命令都靠它拿「这一轮从哪儿开始」。 */
 function persistBaseline(sessionKey: string, baseline: TurnBaseline): void {
@@ -761,16 +777,23 @@ function persistBaseline(sessionKey: string, baseline: TurnBaseline): void {
   writeJsonFile(BASELINE_STATE_FILE, state);
 }
 
-/** 存下上一轮的报告；本轮没有改动时清掉该仓库的旧条目，免得 CLI 报上一轮的内容。 */
+/** 追加一轮报告到该仓库的历史；本轮没有改动就什么都不写（历史保持原样）。 */
 function persistLastReport(sessionKey: string, repoRoot: string, report: ReportData | null): void {
-  const state = readJsonFile<LastReportState>(LAST_REPORT_FILE) ?? { version: 1, repos: {} };
-  state.version = 1;
-  if (report) {
-    state.repos[repoRoot] = { ...report, sessionId: sessionKey, generatedAt: Date.now() };
-  } else {
-    delete state.repos[repoRoot];
-  }
+  if (!report) return;
+  const state = readJsonFile<LastReportState>(LAST_REPORT_FILE) ?? { version: 2, repos: {} };
+  state.version = 2;
+  const bucket = (state.repos[repoRoot] ??= { turns: [] });
+  bucket.turns.unshift({ ...report, sessionId: sessionKey, generatedAt: Date.now() });
+  bucket.turns = bucket.turns.slice(0, MAX_STORED_TURNS);
   writeJsonFile(LAST_REPORT_FILE, state);
+}
+
+/** 读某仓库最近的第 `index` 轮报告（0 = 最新）。 */
+function readStoredTurn(repoRoot: string, index = 0): StoredTurn | null {
+  const state = readJsonFile<LastReportState>(LAST_REPORT_FILE);
+  const bucket = state?.repos?.[repoRoot];
+  if (!bucket || !Array.isArray(bucket.turns) || bucket.turns.length === 0) return null;
+  return bucket.turns[Math.min(Math.max(index, 0), bucket.turns.length - 1)] ?? null;
 }
 
 /**
@@ -1071,13 +1094,14 @@ export default function (pi: ExtensionAPI) {
         // 本轮还在跑（有内存基线）→ 直接算当前进度
         report = await buildTurnReport(turnBaseline, "turn");
       } else {
-        // 轮次已结束 → 读「上一轮」落盘的报告（本轮基线在结束时就用掉了）
+        // 轮次已结束 → 读落盘的历史（本轮基线在结束时就用掉了）；`/diff-report 2` 看再往前一轮
         const repoRoot = await gitRoot(cwd);
         if (!repoRoot) {
           ctx?.ui?.notify?.("没有可汇报的改动：当前目录不是 git 仓库（或仓库还没有任何提交）。", "info");
           return;
         }
-        report = readJsonFile<LastReportState>(LAST_REPORT_FILE)?.repos?.[repoRoot] ?? null;
+        const index = Number.parseInt(raw, 10);
+        report = readStoredTurn(repoRoot, Number.isFinite(index) && index > 0 ? index - 1 : 0);
         if (!report) {
           ctx?.ui?.notify?.(
             "这个仓库还没有可汇报的轮次：跑一轮带文件改动的任务后再来（或直接跑 `diff-report` 命令）。",

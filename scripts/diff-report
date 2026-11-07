@@ -9,6 +9,7 @@
   diff-report                 打印当前仓库上一轮的改动
   diff-report --repo <路径>    指定仓库（默认当前目录所在的 git 仓库）
   diff-report --all           列出所有仓库各自上一轮的改动摘要
+  diff-report --turn 2        看再往前一轮（1 = 最近一轮）
   diff-report --json          输出原始 JSON（给脚本用）
   diff-report --since         不用落盘的快照，改成「上一轮基线 → 现在」重算
                               （轮次之后又改过东西时用得上）
@@ -71,6 +72,18 @@ def load_json(path: Path) -> dict:
             return json.load(handle)
     except Exception:
         return {}
+
+
+def turns_of(entry) -> list[dict]:
+    """把落盘条目归一成一串轮次（新的在前）；兼容老的「单条」结构。"""
+    if not isinstance(entry, dict):
+        return []
+    turns = entry.get("turns")
+    if isinstance(turns, list):
+        return [item for item in turns if isinstance(item, dict)]
+    if entry.get("files") is not None:
+        return [entry]
+    return []
 
 
 def fmt_report(report: dict, generated_at: float | None) -> str:
@@ -188,7 +201,14 @@ def main(argv: list[str]) -> int:
         if as_json:
             print(json.dumps(state, ensure_ascii=False, indent=2))
             return 0
-        for report in sorted(state.values(), key=lambda item: to_seconds(item.get("generatedAt")) or 0, reverse=True):
+        rows = []
+        for entry in state.values():
+            turns = turns_of(entry)
+            if turns:
+                rows.append(turns[0])
+        if not rows:
+            die("还没有任何仓库的轮次报告。", 1)
+        for report in sorted(rows, key=lambda item: to_seconds(item.get("generatedAt")) or 0, reverse=True):
             print(summarize(report))
         return 0
 
@@ -203,9 +223,21 @@ def main(argv: list[str]) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2) if as_json else fmt_report(report, None))
         return 0
 
-    report = state.get(root)
-    if not report:
+    turns = turns_of(state.get(root))
+    if not turns:
         die("这个仓库还没有轮次报告：跑一轮带文件改动的 pi 任务后再来。", 1)
+    index = 0
+    if "--turn" in args:
+        position = args.index("--turn")
+        if position + 1 >= len(args):
+            die("--turn 需要一个序号（1 = 最近一轮）")
+        try:
+            index = max(0, int(args[position + 1]) - 1)
+        except ValueError:
+            die("--turn 需要一个正整数")
+    if index >= len(turns):
+        die(f"只存了最近 {len(turns)} 轮，没有第 {index + 1} 轮。", 1)
+    report = turns[index]
     if as_json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
