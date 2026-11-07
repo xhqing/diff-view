@@ -5,18 +5,21 @@
 （统计 + unified diff）落盘成一份 JSON。这个脚本只读那份状态，不跑 pi、不触发
 任何会话，所以在任何终端里随时可以敲。
 
-用法：
-  turn-diff                   打印当前仓库上一轮的改动
-  turn-diff --patch           连同这一轮的具体改动（unified diff）一起打印
-  turn-diff --list            只列出这一轮改了哪些文件（带编号，给 --file 用）
-  turn-diff --file <N|模式>   只看某个文件的正文：编号（来自 --list）或路径子串 / 通配
-  turn-diff --repo <路径>      指定仓库（默认当前目录所在的 git 仓库）
-  turn-diff --turn 2          看再往前一轮（1 = 最近一轮）
-  turn-diff --all             列出所有仓库各自上一轮的改动摘要
-  turn-diff --json            输出原始 JSON（给脚本用）
-  turn-diff --color <模式>     颜色：auto（默认，仅 TTY 上色）/ always / never
+用法（会话里 /turn-diff 用同一套词）：
+  turn-diff                   打印当前仓库上一轮的改动（摘要）
+  turn-diff list              只列出这一轮改了哪些文件（带编号）
+  turn-diff file              打印这一轮所有文件的正文
+  turn-diff file 2            只看第 2 个文件（编号来自 list / 摘要）
+  turn-diff file 'src/**'     只看路径匹配的文件（子串或通配）
+  turn-diff 2                 看再往前一轮
+  turn-diff 2 file 3          第 2 轮里的第 3 个文件
+  turn-diff --all             每个有轮次报告的仓库各一行摘要
+  turn-diff --repo <路径>      指定仓库（默认当前目录）
+  turn-diff --json            输出原始 JSON
+  turn-diff --color <模式>     颜色：auto（默认，仅 TTY）/ always / never
 
 颜色：新增行绿底、删除行红底，行内真正改动的那几个片段用更亮的底色标出来。
+兼容：--patch / -p 等同 file，--file <x> 等同 file <x>，--list 等同 list，--turn <n> 等同 <n>。
 退出码：0 = 有内容；1 = 没有可汇报的改动；2 = 用法 / 环境问题。
 """
 
@@ -325,36 +328,59 @@ def summarize(report: dict) -> str:
 
 def main(argv: list[str]) -> int:
     args = list(argv[1:])
-    as_json = "--json" in args
-    show_all = "--all" in args
-    want_patch = "--patch" in args or "-p" in args
-    want_list = "--list" in args
-    file_arg = None
-    if "--file" in args:
-        position = args.index("--file")
-        if position + 1 >= len(args):
-            die("--file 需要一个编号或路径片段（先用 --list 看编号）")
-        file_arg = args[position + 1]
-        want_patch = True
+    as_json = False
+    show_all = False
     color_choice = "auto"
-    if "--color" in args:
-        position = args.index("--color")
-        if position + 1 >= len(args):
-            die("--color 需要 auto / always / never")
-        color_choice = args[position + 1]
-        if color_choice not in ("auto", "always", "never"):
-            die("--color 只接受 auto / always / never")
-    for flag in args:
-        if flag.startswith("--color="):
-            color_choice = flag.split("=", 1)[1]
     repo_arg = None
-    if "--repo" in args:
-        position = args.index("--repo")
-        if position + 1 >= len(args):
-            die("--repo 需要一个路径")
-        repo_arg = args[position + 1]
+    verbs: list[str] = []
+    patterns: list[str] = []
 
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in ("--repo", "--color", "--file", "--turn"):
+            if index + 1 >= len(args):
+                die(f"{arg} 需要取值")
+            value = args[index + 1]
+            if arg == "--repo":
+                repo_arg = value
+            elif arg == "--color":
+                color_choice = value
+            elif arg == "--file":
+                verbs.append("file")
+                patterns.append(value)
+            else:  # --turn
+                verbs.append(value)
+            index += 2
+            continue
+        if arg.startswith("--color="):
+            color_choice = arg.split("=", 1)[1]
+        elif arg == "--json":
+            as_json = True
+        elif arg == "--all":
+            show_all = True
+        elif arg in ("--patch", "-p"):
+            verbs.append("file")
+        elif arg in ("--list", "list"):
+            verbs.append("list")
+        elif arg == "file":
+            verbs.append("file")
+        elif arg == "head":
+            die("这个项目只看「本轮改了什么」。要看全部未提交改动，请直接用 git diff。")
+        elif arg.isdigit():
+            # 出现在 file 之后的数字是「第几个文件」，之前的是「第几轮」
+            if "file" in verbs and not patterns:
+                patterns.append(arg)
+            else:
+                verbs.append(arg)
+        else:
+            patterns.append(arg)
+        index += 1
+
+    if color_choice not in ("auto", "always", "never"):
+        die("--color 只接受 auto / always / never")
     colored = use_color(color_choice)
+
     state = load_json(STATE_FILE).get("repos") or {}
 
     if show_all:
@@ -373,56 +399,57 @@ def main(argv: list[str]) -> int:
     if not turns:
         die("这个仓库还没有轮次报告：跑一轮带文件改动的 pi 任务后再来。", 1)
 
-    index = 0
-    if "--turn" in args:
-        position = args.index("--turn")
-        if position + 1 >= len(args):
-            die("--turn 需要一个序号（1 = 最近一轮）")
-        try:
-            index = max(0, int(args[position + 1]) - 1)
-        except ValueError:
-            die("--turn 需要一个正整数")
-    if index >= len(turns):
-        die(f"只存了最近 {len(turns)} 轮，没有第 {index + 1} 轮。", 1)
+    turn_numbers = [int(verb) for verb in verbs if verb.isdigit()]
+    turn_index = max(0, turn_numbers[-1] - 1) if turn_numbers else 0
+    if turn_index >= len(turns):
+        die(f"只存了最近 {len(turns)} 轮，没有第 {turn_index + 1} 轮。", 1)
+    report = turns[turn_index]
 
-    report = turns[index]
-    if as_json:
+    want_list = "list" in verbs
+    file_filter = patterns[0] if patterns else None
+    want_body = "file" in verbs or file_filter is not None
+
+    if as_json and not want_list and not want_body:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
+    files = report.get("files") or []
     if want_list:
-        for number, item in enumerate(report.get("files") or [], start=1):
+        for number, item in enumerate(files, start=1):
             mark = KIND_MARK.get(str(item.get("kind")), "M")
             stat = "二进制" if item.get("binary") else stat_text(str(item.get("kind")), item.get("added", 0), item.get("deleted", 0), colored)
             print(f"  {number}. {mark} {item.get('path')}  {stat}")
         return 0
 
     print(fmt_report(report, report.get("generatedAt"), colored))
-    if want_patch:
-        patch = report.get("patch")
-        if not patch:
-            print()
-            print("（这一轮没有存 patch 正文：这份报告是旧版本落盘的，或本轮没有文本改动。当前工作区可以直接 `git diff`。）")
-            return 0
-        if file_arg:
-            chunks = split_patch_by_file(patch)
-            if file_arg.isdigit():
-                files = report.get("files") or []
-                position = int(file_arg) - 1
-                if not 0 <= position < len(files):
-                    die(f"没有第 {file_arg} 个文件（先用 --list 看编号）。", 1)
-                wanted_path = str(files[position].get("path"))
-                chunks = [chunk for chunk in chunks if chunk[0] == wanted_path]
-            else:
-                chunks = [chunk for chunk in chunks if match_path(chunk[0], file_arg)]
-            if not chunks:
-                die(f"没有匹配 {file_arg!r} 的文件（先用 --list 看编号）。", 1)
-            patch = "\n".join(text for _, text in chunks)
+    if not want_body:
+        return 0
+
+    patch = report.get("patch")
+    if not patch:
         print()
-        print("\n".join(render_patch(patch, colored)))
-        if report.get("patchTruncated"):
-            print()
-            print("（patch 过长，已截断。）")
+        print("（这一轮没有存正文：这份报告是旧版本落盘的，或本轮没有文本改动。当前工作区可以直接 `git diff`。）")
+        return 0
+
+    if file_filter:
+        chunks = split_patch_by_file(patch)
+        if file_filter.isdigit():
+            position = int(file_filter) - 1
+            if not 0 <= position < len(files):
+                die(f"没有第 {file_filter} 个文件（先用 turn-diff list 看编号）。", 1)
+            wanted_path = str(files[position].get("path"))
+            chunks = [chunk for chunk in chunks if chunk[0] == wanted_path]
+        else:
+            chunks = [chunk for chunk in chunks if match_path(chunk[0], file_filter)]
+        if not chunks:
+            die(f"没有匹配 {file_filter!r} 的文件（先用 turn-diff list 看编号）。", 1)
+        patch = "\n".join(text for _, text in chunks)
+
+    print()
+    print("\n".join(render_patch(patch, colored)))
+    if report.get("patchTruncated"):
+        print()
+        print("（正文过长，已截断。）")
     return 0
 
 

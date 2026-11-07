@@ -38,12 +38,12 @@
 
 ```
 /turn-diff              把上一轮的改动贴进会话（统计 + 文件列表）
-/turn-diff patch        同上，并带上 unified diff 正文（多个文件时让你挑）
-/turn-diff patch 2      只看列表里的第 2 个文件
-/turn-diff patch src/   只看路径匹配这个片段 / 通配的文件
-/turn-diff 2 patch      再往前一轮，并带上正文
-/turn-diff head         改看「工作区相对 HEAD 的全量未提交改动」
-/turn-diff head patch   同上，并带上正文
+/turn-diff list         只列出这一轮改了哪些文件（带编号）
+/turn-diff file         这一轮所有文件的正文
+/turn-diff file 2       只看列表里的第 2 个文件
+/turn-diff file src/    只看路径匹配这个片段 / 通配的文件
+/turn-diff 2            再往前一轮
+/turn-diff 2 file 3     那一轮里的第 3 个文件
 /turn-diff on|off       每轮结束是否自动贴（默认关）
 ```
 
@@ -51,12 +51,13 @@
 
 ```bash
 turn-diff                   当前仓库上一轮的改动
-turn-diff --list            只列出这一轮改了哪些文件（带编号）
-turn-diff --patch           这一轮的完整 unified diff
-turn-diff --file 2          只看 --list 里的第 2 个文件
-turn-diff --file '*.ts'     只看路径匹配的文件
+turn-diff list              只列出这一轮改了哪些文件（带编号）
+turn-diff file              这一轮所有文件的正文
+turn-diff file 2            只看第 2 个文件
+turn-diff file '*.ts'       只看路径匹配的文件
+turn-diff 2                 看再往前一轮（1 = 最近一轮）
+turn-diff 2 file 3          那一轮里的第 3 个文件
 turn-diff --repo ~/x        指定仓库
-turn-diff --turn 2          看再往前一轮（1 = 最近一轮）
 turn-diff --all             每个有轮次报告的仓库各一行摘要
 turn-diff --json            机器可读输出
 turn-diff --color always    强制上色（另有 auto / never）
@@ -73,7 +74,7 @@ diff 正文按「改动视图」来画，不是普通日志：
 
 默认跟随终端（只在 TTY 上上色）；`--color never` 关掉，`--color always` 在管道里也强制输出颜色。会话里的卡片用同一套配色。
 
-改动文件多的时候不会一次性糊满屏幕：`/turn-diff patch` 会弹出选择器（「全部」或某个文件），`/turn-diff patch <编号>|<片段>` 直接定位到一个文件；命令行对应 `--list` 与 `--file`。
+改动文件多的时候不会一次性糊满屏幕：`/turn-diff file` 会弹出选择器（「全部」或某个文件），`/turn-diff file <编号>|<片段>` 直接定位到一个文件；命令行用同一套词：`turn-diff file 2`。
 
 ## 工作原理
 
@@ -86,7 +87,7 @@ diff 正文按「改动视图」来画，不是普通日志：
 ## 已知边界
 
 - **只支持 git**：不是 git 仓库的目录直接跳过（没有基线可做差）。
-- **只有轮次口径**：报告回答「这一轮改了什么」；要「所有未提交改动」用 `/turn-diff head` 或直接 `git diff`。
+- **只有轮次口径**：报告回答「这一轮改了什么」；要「所有未提交改动」直接 `git diff`——本项目只报本轮。
 - **基线时就存在的未跟踪文件**：即使本轮又被改，也不会出现在报告里（git 没有它的 diff 基准）。
 - patch 只含文本：二进制、超过 200 KB 的未跟踪文件不并进正文；单轮 patch 上限 80 KB（统计仍然完整）。
 - 每个仓库保留最近 20 轮，更早的会被丢弃。

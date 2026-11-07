@@ -38,12 +38,12 @@ The script deploys two things:
 
 ```
 /turn-diff              paste the previous turn's changes (stats + files)
-/turn-diff patch        same, plus the unified diff (pick a file when several changed)
-/turn-diff patch 2      only file #2 from the listing
-/turn-diff patch src/   only files whose path matches a fragment or glob
-/turn-diff 2 patch      the turn before last, with its diff
-/turn-diff head         show everything uncommitted vs HEAD instead
-/turn-diff head patch   same, with its diff
+/turn-diff list         just the changed files, numbered
+/turn-diff file         the unified diff of the whole turn
+/turn-diff file 2       only file #2 from the listing
+/turn-diff file src/    only files whose path matches a fragment or glob
+/turn-diff 2            the turn before last
+/turn-diff 2 file 3     file #3 of that turn
 /turn-diff on|off       paste automatically at the end of every turn (default: off)
 ```
 
@@ -51,12 +51,13 @@ The script deploys two things:
 
 ```bash
 turn-diff                   the previous turn's changes for the repo you are in
-turn-diff --list            just the changed files, numbered
-turn-diff --patch           the turn's whole unified diff
-turn-diff --file 2          only file #2 from --list
-turn-diff --file '*.ts'     only matching paths
+turn-diff list              just the changed files, numbered
+turn-diff file              the unified diff of the whole turn
+turn-diff file 2            only file #2 from the listing
+turn-diff file '*.ts'       only matching paths
+turn-diff 2                 one turn further back (1 = the latest)
+turn-diff 2 file 3          file #3 of that turn
 turn-diff --repo ~/x        same for another repo
-turn-diff --turn 2          one turn further back (1 = the latest)
 turn-diff --all             one line per repo that has a turn report
 turn-diff --json            machine-readable output
 turn-diff --color always    force colors (auto / never for the other modes)
@@ -73,7 +74,7 @@ Diff bodies are painted like a change view, not like a log:
 
 Colors follow the terminal by default (TTY only); `--color never` turns them off, `--color always` forces them through a pipe. In the session card the same palette is used.
 
-A turn that touched several files does not dump everything at once: `/turn-diff patch` opens a picker (`全部` or one file), and `/turn-diff patch <#>|<pattern>` goes straight to one file. The same applies on the command line via `--list` and `--file`.
+A turn that touched several files does not dump everything at once: `/turn-diff file` opens a picker (all files or one), and `/turn-diff file <#>|<pattern>` goes straight to one file. The command line uses the same words: `turn-diff file 2`.
 
 ## How it works
 
@@ -86,7 +87,7 @@ Prefer `git stash create` over patching the index: it captures staged *and* unst
 ## Known limits
 
 - **git only**: a directory that is not a git repository is skipped (there is no baseline to diff against).
-- **Turn scope only**: the report answers "what changed during this turn". For "everything uncommitted", use `/turn-diff head` or plain `git diff`.
+- **Turn scope only**: the report answers "what changed during this turn". For "everything uncommitted", use plain `git diff` — this project only reports the turn.
 - **Untracked files that already existed at baseline** are not reported even if the turn edited them — git has no diff base for them.
 - The patch is text only: binaries and untracked files over 200 KB are left out, and a single turn's patch is capped at 80 KB (stats stay complete).
 - Up to 20 turns per repo are kept; older ones are dropped.

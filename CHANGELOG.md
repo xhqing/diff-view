@@ -10,6 +10,12 @@ All notable changes to this project will be documented in this file.
 - **改了什么**：① 摘要列表加编号（`1. M src/a.ts +12 -3`）；② 会话里 `/turn-diff patch` 在多个文件时弹出选择器（「全部」或某个文件），`/turn-diff patch <编号>|<路径片段/通配>` 直接定位，且支持与轮次/口径组合（`/turn-diff 2 patch`、`/turn-diff head patch`）；③ 命令行增加 `--list`（列出编号）与 `--file <编号|模式>`，与 `--patch` 组合只看一个文件；④ 生成的未跟踪文件 hunk 补上 `diff --git` 头，切分更稳，同时兼容老记录里没有该头的格式。
 - **验证**：造了一份三文件的假状态——`--list` 编号正确；`--patch --file 2` 只输出第二个文件、`--file '*.md'` 只输出匹配项、`--file 9` 报错退出 1 并提示先看编号；TS 侧 `splitPatchByFile` 对「新格式（3 段）」与「老格式（未跟踪文件段没有 diff --git 头）」都切分正确，`matchPath` 的子串 / 通配 / 大小写用例全过。
 - **边界**：编号以摘要列表的顺序（按改动量排序）为准，正文里的顺序仍是 git 的路径序；正文仍受单轮 80 KB 上限约束。
+### 变更（用词统一成 `file`，并去掉「和 HEAD 比」这个口径）
+
+- **为什么**：用户指出两点——(1) 会话里写 `patch`、命令行写 `--file`，两处用词不一致，应该都叫 `file`（`/turn-diff file 2`）；(2) 本项目专注「本轮 diff」，`head`（工作区相对 HEAD 的全量）属于另一个问题，不该混进来。
+- **改了什么**：会话命令改成 `file`（`patch` 保留为别名），命令行从 `--patch` / `--file` 改成动词形式 `turn-diff file`、`turn-diff file 2`、`turn-diff file '*.ts'`、`turn-diff list`，两侧词表完全一致；`--patch` / `--file` / `--list` / `--turn` 作为兼容别名保留。删掉 `head` 口径（`captureHeadBaseline`、`scope` 字段分支一并移除），误输 `head` 时明确提示「本项目只看本轮，要看全部未提交改动请用 git diff」。
+- **验证**：假状态（两轮、三轮次文件）跑过 `list`、`file 1/2/3` 各自命中正确文件、`file '*.md'` 通配、`2 file` 取第二轮、`--file 3`、`head` 退出码 2 并给出提示、`file 9` 越界报错。
+
 
 ## [2.0.0] - 2026-11-07
 

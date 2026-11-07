@@ -38,9 +38,10 @@ echo "新会话自动生效；已打开的 pi 会话执行 /reload 后生效。"
 echo
 echo "用法："
 echo "  /turn-diff                 把上一轮 AI 改了什么贴进会话（默认不自动贴）"
-echo "  /turn-diff patch           带上 unified diff 正文（绿底新增 / 红底删除）"
-echo "  /turn-diff head            改看「工作区相对 HEAD 的全量未提交改动」"
+echo "  /turn-diff file            带上 unified diff 正文（绿底新增 / 红底删除；多文件时让你挑）"
+echo "  /turn-diff file 2          只看列表里的第 2 个文件"
+echo "  /turn-diff list            只列文件与编号"
 echo "  /turn-diff 2               更早一轮"
 echo "  /turn-diff on|off          切换每轮结束是否自动贴"
 echo
-echo "命令行（不经过 pi，随时可敲）： turn-diff [--patch] [--repo <路径>] [--turn N] [--all] [--json] [--color auto|always|never]"
+echo "命令行（不经过 pi，随时可敲）： turn-diff [list] [file [N|模式]] [N] [--repo <路径>] [--all] [--json] [--color auto|always|never]"
