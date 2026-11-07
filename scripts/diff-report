@@ -247,12 +247,16 @@ def main(argv: list[str]) -> int:
     if want_patch:
         patch = report.get("patch")
         if not patch:
-            print("\n（这一轮没有存 patch 正文：可能来自旧版本，或本轮没有文本改动。）", file=sys.stderr)
-            return 1
+            # 统计有了就不算失败：patch 是 1.3.0 才落盘的，旧轮次没有很正常
+            print()
+            print("（这一轮没有存 patch 正文：这份报告是 1.3.0 之前落盘的，或本轮没有文本改动。"
+                  "历史正文只能看新轮次；当前工作区的改动可以直接 `git diff`。）")
+            return 0
         print()
         print(patch.rstrip("\n"))
         if report.get("patchTruncated"):
-            print("\n（patch 过长，已截断。）", file=sys.stderr)
+            print()
+            print("（patch 过长，已截断。）")
     return 0
 
 
