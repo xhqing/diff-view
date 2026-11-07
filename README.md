@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="turn-diff" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-2.0.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-2.1.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-git-000000)](#)
 
@@ -38,9 +38,12 @@ The script deploys two things:
 
 ```
 /turn-diff              paste the previous turn's changes (stats + files)
-/turn-diff patch        same, plus the unified diff
+/turn-diff patch        same, plus the unified diff (pick a file when several changed)
+/turn-diff patch 2      only file #2 from the listing
+/turn-diff patch src/   only files whose path matches a fragment or glob
+/turn-diff 2 patch      the turn before last, with its diff
 /turn-diff head         show everything uncommitted vs HEAD instead
-/turn-diff 2            the turn before last
+/turn-diff head patch   same, with its diff
 /turn-diff on|off       paste automatically at the end of every turn (default: off)
 ```
 
@@ -48,7 +51,10 @@ The script deploys two things:
 
 ```bash
 turn-diff                   the previous turn's changes for the repo you are in
-turn-diff --patch           also print that turn's unified diff
+turn-diff --list            just the changed files, numbered
+turn-diff --patch           the turn's whole unified diff
+turn-diff --file 2          only file #2 from --list
+turn-diff --file '*.ts'     only matching paths
 turn-diff --repo ~/x        same for another repo
 turn-diff --turn 2          one turn further back (1 = the latest)
 turn-diff --all             one line per repo that has a turn report
@@ -65,7 +71,9 @@ Diff bodies are painted like a change view, not like a log:
 - added lines get a **green background**, removed lines a **red background**;
 - inside a paired `-`/`+` line, only the tokens that actually changed get a **brighter background**, so a one-word edit stands out instead of repainting the whole line.
 
-Colors follow the terminal by default (TTY only); `--color never` turns them off, `--color always` forces them through a pipe. In the session card the same palette is used, and `/turn-diff patch` renders the body inline (collapsed: first 30 lines; expand to see all).
+Colors follow the terminal by default (TTY only); `--color never` turns them off, `--color always` forces them through a pipe. In the session card the same palette is used.
+
+A turn that touched several files does not dump everything at once: `/turn-diff patch` opens a picker (`全部` or one file), and `/turn-diff patch <#>|<pattern>` goes straight to one file. The same applies on the command line via `--list` and `--file`.
 
 ## How it works
 

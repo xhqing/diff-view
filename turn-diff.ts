@@ -339,7 +339,10 @@ async function buildTurnPatch(baseline: TurnBaseline): Promise<{ patch: string; 
       const lines = text.split("\n");
       if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
       const body = lines.map((line) => `+${line}`).join("\n");
-      chunks.push(`--- /dev/null\n+++ b/${entry.path}\n@@ -0,0 +1,${lines.length} @@\n${body}\n`);
+      chunks.push(
+        `diff --git a/${entry.path} b/${entry.path}\nnew file mode 100644\n--- /dev/null\n+++ b/${entry.path}\n` +
+          `@@ -0,0 +1,${lines.length} @@\n${body}\n`,
+      );
     }
   }
   const patch = chunks.join("");
@@ -516,6 +519,72 @@ function renderPatch(patch: string): string[] {
   return out;
 }
 
+interface PatchChunk {
+  path: string;
+  text: string;
+}
+
+/**
+ * 把整段 patch 按文件切开。
+ *
+ * 正常情况下每段都以 `diff --git a/x b/x` 开头；老版本落盘的 patch 里，未跟踪文件
+ * 那几段没有这个头，只能靠 `--- /dev/null` + `+++ b/x` 认出来，这里两种都兼容。
+ */
+function splitPatchByFile(patch: string): PatchChunk[] {
+  const lines = patch.split("\n");
+  const chunks: PatchChunk[] = [];
+  let current: string[] = [];
+  let currentPath = "";
+  const flush = () => {
+    if (current.length > 0) chunks.push({ path: currentPath, text: current.join("\n") });
+    current = [];
+    currentPath = "";
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.startsWith("diff --git ")) {
+      flush();
+      const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+      currentPath = match ? match[2] : "";
+      current.push(line);
+      continue;
+    }
+    if (line === "--- /dev/null") {
+      const match = /^\+\+\+ b\/(.+)$/.exec(lines[index + 1] ?? "");
+      if (match) {
+        // 老记录的未跟踪文件段没有 `diff --git` 头：碰到「另一个文件」就以这里为界切开。
+        // 正常的新文件段 currentPath 已经等于它，不切。
+        if (currentPath !== "" && currentPath !== match[1]) flush();
+        currentPath = match[1];
+      }
+    }
+    if (line === "" && index === lines.length - 1) continue;
+    current.push(line);
+  }
+  flush();
+  return chunks.filter((chunk) => chunk.text.trim() !== "");
+}
+
+/** 路径匹配：先按子串，再按 `*` / `?` 通配（都忽略大小写）。 */
+function matchPath(candidate: string, pattern: string): boolean {
+  const lowerCandidate = candidate.toLowerCase();
+  const lowerPattern = pattern.toLowerCase();
+  if (lowerCandidate.includes(lowerPattern)) return true;
+  const regex = new RegExp(
+    `^${lowerPattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`,
+    "i",
+  );
+  return regex.test(candidate);
+}
+
+/** 选择器里一行：`2. src/a.ts  +12 -3`。 */
+function formatChunkLabel(chunk: PatchChunk, report: ReportData, index: number): string {
+  const file = report.files.find((item) => item.path === chunk.path);
+  if (!file) return `${index + 1}. ${chunk.path}`;
+  const stat = file.binary ? "二进制" : `+${file.added} -${file.deleted}`;
+  return `${index + 1}. ${chunk.path}  ${stat}`;
+}
+
 /** 统计行的加减号上色（CLI 与会话共用同一套）。 */
 function colorStat(kind: ReportFile["kind"], added: number, deleted: number): string {
   if (kind === "deleted") return `${C.delFg}-${deleted}${C.reset}`;
@@ -543,11 +612,11 @@ function registerRenderer(pi: ExtensionAPI): void {
       ),
     );
     const limit = expanded ? data.files.length : Math.min(VISIBLE_FILES, data.files.length);
-    for (const file of data.files.slice(0, limit)) {
+    data.files.slice(0, limit).forEach((file, index) => {
       const mark = file.kind === "added" ? "A" : file.kind === "deleted" ? "D" : file.kind === "renamed" ? "R" : "M";
       const stat = file.binary ? "二进制" : colorStat(file.kind, file.added, file.deleted);
-      box.addChild(new Text(`  ${mark} ${file.path}  ${stat}`, 0, 0));
-    }
+      box.addChild(new Text(`  ${index + 1}. ${mark} ${file.path}  ${stat}`, 0, 0));
+    });
     if (data.files.length > limit) {
       box.addChild(new Text(theme.fg("dim", `  …还有 ${data.files.length - limit} 个文件（展开查看）`), 0, 0));
     }
@@ -619,19 +688,27 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("turn-diff", {
-    description: "把上一轮 AI 改了什么贴进会话（纯 git）；patch 看正文，head 看相对 HEAD 全量，on/off 切换自动贴",
+    description:
+      "把上一轮 AI 改了什么贴进会话（纯 git）：不带参数只给摘要，patch 给正文（多文件时可挑选），head 看相对 HEAD 全量，on/off 切换自动贴",
     handler: async (args: string, ctx: any) => {
       const raw = (args ?? "").trim().toLowerCase();
-      if (raw === "on" || raw === "off") {
-        settings = { autoPost: raw === "on" };
+      const tokens = raw.split(/\s+/).filter(Boolean);
+      if (tokens.includes("on") || tokens.includes("off")) {
+        const on = tokens.includes("on");
+        settings = { autoPost: on };
         saveSettings(settings);
-        ctx?.ui?.notify?.(`每轮结束自动贴改动卡片已${raw === "on" ? "开启" : "关闭"}。`, "info");
+        ctx?.ui?.notify?.(`每轮结束自动贴改动卡片已${on ? "开启" : "关闭"}。`, "info");
         return;
       }
+      const wantHead = tokens.includes("head");
+      const wantPatch = tokens.includes("patch");
+      const indexToken = tokens.find((token) => /^\d+$/.test(token));
+      const filterToken = tokens.find((token) => !["patch", "head"].includes(token) && !/^\d+$/.test(token));
       const cwd = String(ctx?.cwd ?? sessionCwd);
-      const wantPatch = raw === "patch";
+
       let report: ReportData | null = null;
-      if (raw === "head") {
+      let patchSource: TurnBaseline | null = null;
+      if (wantHead) {
         const headBaseline = await captureHeadBaseline(cwd);
         if (!headBaseline) {
           ctx?.ui?.notify?.("这里不是 git 仓库（或仓库还没有任何提交）。", "info");
@@ -642,23 +719,18 @@ export default function (pi: ExtensionAPI) {
           ctx?.ui?.notify?.("工作区相对 HEAD 是干净的。", "info");
           return;
         }
+        if (wantPatch) patchSource = headBaseline;
       } else if (turnBaseline) {
         report = await buildTurnReport(turnBaseline, "turn");
-        if (report && wantPatch) {
-          const { patch, truncated } = await buildTurnPatch(turnBaseline);
-          if (patch) {
-            report.patch = patch;
-            if (truncated) report.patchTruncated = true;
-          }
-        }
+        if (wantPatch) patchSource = turnBaseline;
       } else {
         const repoRoot = await gitRoot(cwd);
         if (!repoRoot) {
           ctx?.ui?.notify?.("这里不是 git 仓库（或仓库还没有任何提交）。", "info");
           return;
         }
-        const index = Number.parseInt(raw, 10);
-        report = readStoredTurn(repoRoot, Number.isFinite(index) && index > 0 ? index - 1 : 0);
+        const index = indexToken ? Number.parseInt(indexToken, 10) : 0;
+        report = readStoredTurn(repoRoot, index > 0 ? index - 1 : 0);
         if (!report) {
           ctx?.ui?.notify?.("这个仓库还没有轮次报告：跑一轮带文件改动的任务后再来（或直接跑 `turn-diff` 命令）。", "info");
           return;
@@ -668,13 +740,51 @@ export default function (pi: ExtensionAPI) {
         ctx?.ui?.notify?.("没有可汇报的改动。", "info");
         return;
       }
+
       if (wantPatch) {
+        // 本轮还在跑或 head 口径时现算一次正文；否则用落盘的那份
+        if (patchSource) {
+          const { patch, truncated } = await buildTurnPatch(patchSource);
+          if (patch) {
+            report.patch = patch;
+            if (truncated) report.patchTruncated = true;
+          }
+        }
         if (!report.patch) {
           ctx?.ui?.notify?.("这一轮没有存 patch 正文（旧记录或没有文本改动）；当前工作区可以直接 `git diff`。", "info");
           return;
         }
-        report = { ...report, showPatch: true };
+        const chunks = splitPatchByFile(report.patch);
+        if (chunks.length === 0) {
+          ctx?.ui?.notify?.("这一轮没有可显示的正文。", "info");
+          return;
+        }
+        let chosen: PatchChunk[] = [];
+        if (filterToken) {
+          const wanted = filterToken;
+          if (/^\d+$/.test(wanted)) {
+            const file = report.files[Number.parseInt(wanted, 10) - 1];
+            if (file) chosen = chunks.filter((chunk) => chunk.path === file.path);
+          } else {
+            chosen = chunks.filter((chunk) => matchPath(chunk.path, wanted));
+          }
+          if (chosen.length === 0) {
+            ctx?.ui?.notify?.(`没有匹配 \`${wanted}\` 的文件；可用 /turn-diff 看编号。`, "info");
+            return;
+          }
+        } else if (chunks.length === 1) {
+          chosen = chunks;
+        } else {
+          // 文件多时让用户挑，别把整轮正文糊进会话
+          const options = [`全部（${chunks.length} 个文件）`, ...chunks.map((chunk, index) => formatChunkLabel(chunk, report!, index))];
+          const picked = await ctx?.ui?.select?.("看哪个文件的正文？", options);
+          if (!picked) return;
+          const position = options.indexOf(picked);
+          chosen = position <= 0 ? chunks : [chunks[position - 1]];
+        }
+        report = { ...report, patch: chosen.map((chunk) => chunk.text).join("\n"), showPatch: true };
       }
+
       pi.appendEntry(ENTRY_TYPE, report);
     },
   });
