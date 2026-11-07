@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.0.3-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.0.4-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -30,6 +30,8 @@ This is a pi extension. It does **not** render diffs itself — cmux (a Ghostty-
 The script copies `diff-view.ts` to `~/.pi/agent/extensions/diff-view.ts`. New sessions pick it up automatically; run `/reload` in sessions that are already open.
 
 Requires macOS and a running cmux (panels are rendered by cmux; the extension is only the command layer). To uninstall, delete that file.
+
+Pi sessions that were not started inside cmux (Ghostty, for example) work too: the extension looks for the CLI bundled in `cmux*.app` under `/Applications` and `~/Applications`, then walks the socket markers in `~/Library/Application Support/cmux/*-last-socket-path` to find the listener. One setting still has to be on your side -- cmux defaults `automation.socketControlMode` to `cmuxOnly`, which only accepts processes cmux started. Set it to `automation` (any local process of the same macOS user may connect) to drive cmux from another terminal; on a shared machine keep it at `cmuxOnly` and run pi inside cmux.
 
 ## Usage
 
@@ -68,7 +70,7 @@ cmux's socket path can move around (environment variables go stale after an app 
 
 ## Known limits
 
-- **cmux only**: outside cmux (app not running, or the terminal was not launched from it) the commands fail with a clear error instead of pretending to work.
+- **cmux only**: when cmux is not running the commands fail with a clear error instead of pretending to work. From a terminal that was not launched by cmux, cmux has to allow it first: the automation socket defaults to `cmuxOnly` and rejects outside processes with `Access denied`. Set `automation.socketControlMode` to `automation`, and the extension names that remedy in the error when the denial happens.
 - **Switching sources inside the panel is a cmux upstream bug**: the in-panel source switcher does not really recompute on "Last turn" (its sidecar does not support last-turn as a switchable source); it keeps the old content and spins forever. To view last-turn changes, open a fresh panel with `/open-diff last-turn`.
 - **last-turn needs a baseline**: cmux matches baselines on repository + workspace + surface + session. When any of those miss, `/open-diff` falls back to `unstaged` and says so.
 - **Window routing conflicts**: the root cause is fixed in the cmux CLI source we maintain (caller environment is no longer injected into panel routing). With a cmux build that contains the fix, `/open-diff` can use `last-turn` directly. For an older app that has not been updated yet, the extension keeps a minimal compatibility path: on `Conflicting Dock routing selectors` (or a related socket drop) it retries without the two environment variables and temporarily falls back from `last-turn` to `unstaged`, which it says in the prompt. The extension does not read or write any temporary directory. On retry the panel opens in cmux's default window, which with several windows open may not be the window the command came from.
