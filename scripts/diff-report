@@ -9,6 +9,7 @@
   diff-report                 打印当前仓库上一轮的改动
   diff-report --repo <路径>    指定仓库（默认当前目录所在的 git 仓库）
   diff-report --all           列出所有仓库各自上一轮的改动摘要
+  diff-report --patch         连同这一轮的具体改动（unified diff）一起打印
   diff-report --turn 2        看再往前一轮（1 = 最近一轮）
   diff-report --json          输出原始 JSON（给脚本用）
   diff-report --since         不用落盘的快照，改成「上一轮基线 → 现在」重算
@@ -184,6 +185,7 @@ def recompute_since_baseline(root: str) -> dict | None:
 def main(argv: list[str]) -> int:
     args = list(argv[1:])
     as_json = "--json" in args
+    want_patch = "--patch" in args or "-p" in args
     show_all = "--all" in args
     use_baseline = "--since" in args
     repo_arg = None
@@ -240,8 +242,17 @@ def main(argv: list[str]) -> int:
     report = turns[index]
     if as_json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
-    else:
-        print(fmt_report(report, report.get("generatedAt")))
+        return 0
+    print(fmt_report(report, report.get("generatedAt")))
+    if want_patch:
+        patch = report.get("patch")
+        if not patch:
+            print("\n（这一轮没有存 patch 正文：可能来自旧版本，或本轮没有文本改动。）", file=sys.stderr)
+            return 1
+        print()
+        print(patch.rstrip("\n"))
+        if report.get("patchTruncated"):
+            print("\n（patch 过长，已截断。）", file=sys.stderr)
     return 0
 
 

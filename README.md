@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.2.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.3.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -50,6 +50,7 @@ Pi sessions that were not started inside cmux (Ghostty, for example) work too: t
 
 /diff-report                paste the previous turn's changes (turn diff) into the session
 /diff-report head           show everything uncommitted vs HEAD instead
+/diff-report patch          paste the turn's unified diff
 /diff-report on             also paste it automatically at the end of every turn (default: off)
 /diff-report off            stop that
 ```
@@ -60,12 +61,13 @@ Pi sessions that were not started inside cmux (Ghostty, for example) work too: t
 diff-report                 the previous turn's changes for the repo you are in
 diff-report --repo ~/x      same for another repo
 diff-report --all           one line per repo that has a turn report
+diff-report --patch         also print that turn's unified diff
 diff-report --turn 2        one turn further back (1 = the latest)
 diff-report --json          machine-readable output
 diff-report --since         recompute "turn baseline -> now" (when files changed after the turn)
 ```
 
-Each repo keeps its last 20 turns, so looking at an older one with `--turn` works too, and a turn that changed nothing no longer wipes the previous report.
+Each repo keeps its last 20 turns together with each turn's unified diff (capped at 80 KB per turn), so looking at an older one with `--turn` works too, and a turn that changed nothing no longer wipes the previous report.
 
 `install.sh` copies the CLI to `~/.local/bin/diff-report`. It only reads the report the extension persisted, so it never starts a pi session, never touches a turn, and works in any terminal.
 

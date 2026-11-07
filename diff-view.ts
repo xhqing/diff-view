@@ -677,6 +677,11 @@ interface ReportData {
   added: number;
   deleted: number;
   scope: ReportScope;
+  /** 这一轮的 unified diff 文本（可选；CLI 的 --patch 与会话里的 patch 卡用它）。 */
+  patch?: string;
+  /** 是否在卡片里展开 patch 正文（只有 `/diff-report patch` 会置位）。 */
+  showPatch?: boolean;
+  patchTruncated?: boolean;
 }
 
 function fingerprintFile(absPath: string): string {
@@ -744,6 +749,9 @@ interface BaselineState {
 interface StoredTurn extends ReportData {
   sessionId: string;
   generatedAt: number;
+  /** 这一轮的完整 patch（unified diff 文本）；超过 MAX_STORED_PATCH 会截断。 */
+  patch?: string;
+  patchTruncated?: boolean;
 }
 
 /**
@@ -760,6 +768,8 @@ interface LastReportState {
 
 /** 每个仓库最多留几轮。 */
 const MAX_STORED_TURNS = 20;
+/** 单轮 patch 最多存多少字符（超了就截断，只留统计）。 */
+const MAX_STORED_PATCH = 80_000;
 
 /** 把本轮基线按会话 id 落盘：CLI 与手敲命令都靠它拿「这一轮从哪儿开始」。 */
 function persistBaseline(sessionKey: string, baseline: TurnBaseline): void {
@@ -866,6 +876,43 @@ async function buildTurnReport(baseline: TurnBaseline, scope: ReportScope = "tur
   return { repoName: path.basename(repoRoot), repoRoot, files, added, deleted, scope };
 }
 
+/**
+ * 生成这一轮的完整 patch（unified diff 文本）。
+ *
+ * 已跟踪文件直接用 `git diff <基线>`；这一轮新出现的未跟踪文件拼成「新建文件」的 diff
+ * （git 不跟踪它们，只能手工拼）。总长度超过 MAX_STORED_PATCH 就截断并标记。
+ */
+async function buildTurnPatch(baseline: TurnBaseline): Promise<{ patch: string; truncated: boolean }> {
+  const { repoRoot, head, snapshot } = baseline;
+  const base = snapshot ?? head;
+  const chunks: string[] = [];
+  const tracked = await run("git", ["diff", "--no-color", "--no-ext-diff", base], repoRoot, 30_000);
+  if (tracked.ok && tracked.stdout.trim()) chunks.push(tracked.stdout);
+  const status = await run("git", ["status", "--porcelain", "-z"], repoRoot, 20_000);
+  if (status.ok) {
+    for (const entry of parseStatusEntries(status.stdout)) {
+      if (entry.code !== "??") continue;
+      if (baseline.untracked[entry.path] !== undefined) continue;
+      const abs = path.join(repoRoot, entry.path);
+      let text = "";
+      try {
+        const stat = fs.statSync(abs);
+        if (stat.size > 200_000) continue; // 太大就不塞进 patch
+        text = fs.readFileSync(abs, "utf8");
+      } catch {
+        continue;
+      }
+      const lines = text.split("\n");
+      if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+      const body = lines.map((line) => `+${line}`).join("\n");
+      chunks.push(`--- /dev/null\n+++ b/${entry.path}\n@@ -0,0 +1,${lines.length} @@\n${body}\n`);
+    }
+  }
+  const patch = chunks.join("");
+  if (patch.length <= MAX_STORED_PATCH) return { patch, truncated: false };
+  return { patch: patch.slice(0, MAX_STORED_PATCH), truncated: true };
+}
+
 /** 注册会话内汇报的渲染器（Box + Text，跟其它扩展卡片一个风格）。 */
 function registerReportRenderer(pi: ExtensionAPI): void {
   pi.registerEntryRenderer<ReportData>(REPORT_ENTRY_TYPE, (entry: any, renderOptions: any, theme: any) => {
@@ -894,6 +941,24 @@ function registerReportRenderer(pi: ExtensionAPI): void {
     }
     if (data.files.length > limit) {
       box.addChild(new Text(theme.fg("dim", `  …还有 ${data.files.length - limit} 个文件（展开查看）`), 0, 0));
+    }
+    if (data.showPatch && data.patch) {
+      const patchLines = data.patch.split("\n");
+      const patchLimit = expanded ? patchLines.length : 30;
+      for (const line of patchLines.slice(0, patchLimit)) {
+        const tinted = line.startsWith("+")
+          ? theme.fg("success", line)
+          : line.startsWith("-")
+            ? theme.fg("error", line)
+            : theme.fg("dim", line);
+        box.addChild(new Text(tinted, 0, 0));
+      }
+      if (patchLines.length > patchLimit) {
+        box.addChild(new Text(theme.fg("dim", `  …patch 还有 ${patchLines.length - patchLimit} 行（展开查看）`), 0, 0));
+      }
+      if (data.patchTruncated) {
+        box.addChild(new Text(theme.fg("dim", "  …patch 过长已截断"), 0, 0));
+      }
     }
     return box;
   });
@@ -942,6 +1007,13 @@ export default function (pi: ExtensionAPI) {
     if (!baseline) return;
     try {
       const report = await buildTurnReport(baseline, "turn");
+      if (report) {
+        const { patch, truncated } = await buildTurnPatch(baseline);
+        if (patch) {
+          report.patch = patch;
+          if (truncated) report.patchTruncated = true;
+        }
+      }
       persistLastReport(sessionId, baseline.repoRoot, report);
       if (reportSettings.inlineReport && report) pi.appendEntry(REPORT_ENTRY_TYPE, report);
     } catch {
@@ -1077,6 +1149,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const cwd = String(ctx?.cwd ?? sessionCwd);
+      const wantPatch = raw === "patch";
       let report: ReportData | null = null;
       if (raw === "head") {
         // 可选口径：工作区相对 HEAD 的全部未提交改动（不是「本轮」，要看总量时用）
@@ -1102,6 +1175,13 @@ export default function (pi: ExtensionAPI) {
         }
         const index = Number.parseInt(raw, 10);
         report = readStoredTurn(repoRoot, Number.isFinite(index) && index > 0 ? index - 1 : 0);
+        if (report && wantPatch) {
+          if (!report.patch) {
+            ctx?.ui?.notify?.("这一轮没有存 patch（旧版本落的报告）；想要正文可以直接 `git diff`。", "info");
+            return;
+          }
+          report = { ...report, showPatch: true };
+        }
         if (!report) {
           ctx?.ui?.notify?.(
             "这个仓库还没有可汇报的轮次：跑一轮带文件改动的任务后再来（或直接跑 `diff-report` 命令）。",
