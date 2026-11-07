@@ -19,6 +19,14 @@
  *   - staged   ：暂存区相对 HEAD 的改动。
  *   - branch   ：当前分支相对基线分支的改动（cmux 自己挑基线，可用 --base 覆盖）。
  *
+ * 两条独立能力（2026-11-07 起）：
+ *   1. 面板模式（依赖 cmux）：`/open-diff`、`/close-diff`，看完整 patch；
+ *   2. 会话内汇报（纯 git，不依赖任何外部软件）：每轮开始记基线，轮次结束把
+ *      「这一轮改了什么」作为一张卡片追加到会话末尾（不进 LLM 上下文、不耗 token）；
+ *      随时可用 `/diff-report` 手动出一次，`/diff-report on|off` 切换自动汇报。
+ *      面板要 cmux 在跑、socket 放行、且 last-turn 只对 cmux 里启动的 pi 有效；
+ *      会话内汇报没有这些前提，代价是只给统计（文件 + 行数），不给 patch 正文。
+ *
  * 部署：本文件是 diff-view 项目的 pi 扩展；安装脚本把副本拷到
  * ~/.pi/agent/extensions/diff-view.ts（勿直接改副本）。新会话自动生效，已开会话用 /reload。
  *
@@ -33,6 +41,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { Type } from "typebox";
+import { Box, Text } from "pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ===== 路径与常量 =====
@@ -571,12 +580,229 @@ async function closePanel(panel: OpenedPanel): Promise<RunResult> {
   return runCmux(["close-surface", "--window", windowHandle, "--surface", panel.surface], panel.cwd, 20_000);
 }
 
+// ===== 会话内改动汇报（纯 git，不依赖 cmux） =====
+
+/**
+ * 为什么有这一块：cmux 的 diff 面板很好用，但要它跑起来得同时满足「cmux 在跑 + socket 放行 +
+ * 面板窗口正确」，本质上依赖外部软件，`last-turn` 还要求 pi 是从 cmux 里启动的。这里给一条
+ * 纯 git 的退路：每轮开始时记一个基线，轮次彻底结束（agent_settled）时把「这一轮改了什么」
+ * 直接追加到会话里——不经过任何外部程序，也不进 LLM 上下文（custom entry 只落盘 + 渲染）。
+ */
+
+/** 会话内汇报的开关文件（跨会话共享）。 */
+const SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
+/** 会话内汇报的 entry 类型（pi.appendEntry 的自定义类型）。 */
+const REPORT_ENTRY_TYPE = "diff-view-report";
+/** 不展开时最多列几个文件。 */
+const REPORT_VISIBLE_FILES = 8;
+
+interface ReportSettings {
+  /** 每轮结束自动汇报；默认开启。 */
+  inlineReport: boolean;
+}
+
+function loadReportSettings(): ReportSettings {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
+    return { inlineReport: parsed?.inlineReport !== false };
+  } catch {
+    return { inlineReport: true };
+  }
+}
+
+function saveReportSettings(settings: ReportSettings): void {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
+  } catch {
+    // 写不进去只影响下次启动的默认值，不影响本次会话
+  }
+}
+
+/** 一轮开始时的快照。 */
+interface TurnBaseline {
+  repoRoot: string;
+  /** 基线时刻的 HEAD 提交。 */
+  head: string;
+  /**
+   * `git stash create` 的结果：把基线时刻已跟踪文件的脏改动固化成一个游离提交，
+   * 之后用它当 diff 基准。它不写 ref、不动工作区、也不进 stash 列表。
+   */
+  snapshot: string | null;
+  /** 基线时刻未跟踪文件 → 指纹（大小 + mtime），用来判断「是不是这一轮新冒出来的」。 */
+  untracked: Record<string, string>;
+}
+
+type ReportFileKind = "modified" | "added" | "deleted" | "renamed";
+
+interface ReportFile {
+  path: string;
+  added: number;
+  deleted: number;
+  kind: ReportFileKind;
+  binary?: boolean;
+}
+
+interface ReportData {
+  repoName: string;
+  repoRoot: string;
+  files: ReportFile[];
+  added: number;
+  deleted: number;
+}
+
+function fingerprintFile(absPath: string): string {
+  try {
+    const stat = fs.statSync(absPath);
+    return `${stat.size}:${Math.round(stat.mtimeMs)}`;
+  } catch {
+    return "";
+  }
+}
+
+/** `git status --porcelain -z` → `{ code, path }`；重命名 / 复制取新路径。 */
+function parseStatusEntries(buffer: string): Array<{ code: string; path: string }> {
+  const chunks = buffer.split("\0");
+  const entries: Array<{ code: string; path: string }> = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (!chunk) continue;
+    const code = chunk.slice(0, 2);
+    const entryPath = chunk.slice(3);
+    // 重命名 / 复制条目后面还跟着一个「原路径」块，跳过去
+    if (code.startsWith("R") || code.startsWith("C")) index += 1;
+    entries.push({ code, path: entryPath });
+  }
+  return entries;
+}
+
+function countFileLines(absPath: string): number {
+  try {
+    const text = fs.readFileSync(absPath, "utf8");
+    if (!text) return 0;
+    return text.endsWith("\n") ? text.split("\n").length - 1 : text.split("\n").length;
+  } catch {
+    return 0;
+  }
+}
+
+/** 记本轮基线；不在 git 仓库、或仓库还没有任何提交时返回 null。 */
+async function captureTurnBaseline(cwd: string): Promise<TurnBaseline | null> {
+  const repoRoot = await gitRoot(cwd);
+  if (!repoRoot) return null;
+  const headResult = await run("git", ["rev-parse", "HEAD"], repoRoot, 10_000);
+  if (!headResult.ok) return null;
+  const head = headResult.stdout.trim();
+  if (!head) return null;
+  const stashResult = await run("git", ["stash", "create"], repoRoot, 20_000);
+  const snapshot = stashResult.ok && stashResult.stdout.trim() ? stashResult.stdout.trim() : null;
+  const untracked: Record<string, string> = {};
+  const statusResult = await run("git", ["status", "--porcelain", "-z"], repoRoot, 20_000);
+  if (statusResult.ok) {
+    for (const entry of parseStatusEntries(statusResult.stdout)) {
+      if (entry.code !== "??") continue;
+      untracked[entry.path] = fingerprintFile(path.join(repoRoot, entry.path));
+    }
+  }
+  return { repoRoot, head, snapshot, untracked };
+}
+
+/** 算出「相对基线改了什么」；没有任何改动时返回 null。 */
+async function buildTurnReport(baseline: TurnBaseline): Promise<ReportData | null> {
+  const { repoRoot, head, snapshot } = baseline;
+  const base = snapshot ?? head;
+  const numstat = await run("git", ["diff", "--numstat", base], repoRoot, 20_000);
+  if (!numstat.ok) return null;
+
+  // 状态字母单独取一份，用来区分新增 / 删除 / 重命名；numstat 只给行数。
+  const kinds = new Map<string, ReportFileKind>();
+  const nameStatus = await run("git", ["diff", "--name-status", base], repoRoot, 20_000);
+  if (nameStatus.ok) {
+    for (const line of nameStatus.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const [letter, ...rest] = line.split("\t");
+      const target = rest[rest.length - 1];
+      if (!target) continue;
+      const kind: ReportFileKind =
+        letter.startsWith("A") ? "added" : letter.startsWith("D") ? "deleted" : letter.startsWith("R") ? "renamed" : "modified";
+      kinds.set(target, kind);
+    }
+  }
+
+  const files: ReportFile[] = [];
+  let added = 0;
+  let deleted = 0;
+  for (const line of numstat.stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const [addedRaw, deletedRaw, ...pathParts] = line.split("\t");
+    const filePath = pathParts.join("\t");
+    if (!filePath) continue;
+    const binary = addedRaw === "-" || deletedRaw === "-";
+    const plus = binary ? 0 : Number(addedRaw) || 0;
+    const minus = binary ? 0 : Number(deletedRaw) || 0;
+    added += plus;
+    deleted += minus;
+    files.push({ path: filePath, added: plus, deleted: minus, kind: kinds.get(filePath) ?? "modified", binary });
+  }
+
+  // 这一轮新出现的未跟踪文件（基线里没有的）：按整份文件算作新增行
+  const statusResult = await run("git", ["status", "--porcelain", "-z"], repoRoot, 20_000);
+  if (statusResult.ok) {
+    for (const entry of parseStatusEntries(statusResult.stdout)) {
+      if (entry.code !== "??") continue;
+      if (baseline.untracked[entry.path] !== undefined) continue;
+      const lines = countFileLines(path.join(repoRoot, entry.path));
+      added += lines;
+      files.push({ path: entry.path, added: lines, deleted: 0, kind: "added" });
+    }
+  }
+
+  if (files.length === 0) return null;
+  files.sort((left, right) => right.added + right.deleted - (left.added + left.deleted));
+  return { repoName: path.basename(repoRoot), repoRoot, files, added, deleted };
+}
+
+/** 注册会话内汇报的渲染器（Box + Text，跟其它扩展卡片一个风格）。 */
+function registerReportRenderer(pi: ExtensionAPI): void {
+  pi.registerEntryRenderer<ReportData>(REPORT_ENTRY_TYPE, (entry: any, renderOptions: any, theme: any) => {
+    const expanded = Boolean(renderOptions?.expanded);
+    const data = entry?.data as ReportData | undefined;
+    const box = new Box(1, 1, (text: string) => theme.bg("customMessageBg", text));
+    if (!data || data.files.length === 0) {
+      box.addChild(new Text(theme.fg("dim", "本轮改动：没有文件变化"), 0, 0));
+      return box;
+    }
+    box.addChild(
+      new Text(
+        theme.fg("accent", `本轮改动 · ${data.files.length} 个文件 · +${data.added} -${data.deleted} · ${data.repoName}`),
+        0,
+        0,
+      ),
+    );
+    const limit = expanded ? data.files.length : Math.min(REPORT_VISIBLE_FILES, data.files.length);
+    for (const file of data.files.slice(0, limit)) {
+      const mark = file.kind === "added" ? "A" : file.kind === "deleted" ? "D" : file.kind === "renamed" ? "R" : "M";
+      const stat = file.binary ? "二进制" : `+${file.added} -${file.deleted}`;
+      box.addChild(new Text(`  ${mark} ${file.path}  ${theme.fg("dim", stat)}`, 0, 0));
+    }
+    if (data.files.length > limit) {
+      box.addChild(new Text(theme.fg("dim", `  …还有 ${data.files.length - limit} 个文件（展开查看）`), 0, 0));
+    }
+    return box;
+  });
+}
+
 // ===== 扩展入口 =====
 
 export default function (pi: ExtensionAPI) {
   /** 当前 pi 会话 id：用于区分「谁打开的面板」，也用于匹配 cmux 的 last-turn 基线。 */
   let sessionId = "";
   let sessionCwd = process.cwd();
+  /** 会话内汇报的开关（默认开）与本轮基线。 */
+  let reportSettings = loadReportSettings();
+  let turnBaseline: TurnBaseline | null = null;
+
+  registerReportRenderer(pi);
 
   pi.on("session_start", async (_event: any, ctx: any) => {
     try {
@@ -586,6 +812,30 @@ export default function (pi: ExtensionAPI) {
     }
     if (!sessionId) sessionId = `pid-${process.pid}`;
     sessionCwd = String(ctx?.cwd ?? process.cwd());
+  });
+
+  // 每轮用户提示开始时记基线：之后算「这一轮改了什么」就靠它。
+  pi.on("before_agent_start", async (_event: any, ctx: any) => {
+    const cwd = String(ctx?.cwd ?? sessionCwd);
+    try {
+      turnBaseline = await captureTurnBaseline(cwd);
+    } catch {
+      turnBaseline = null;
+    }
+  });
+
+  // 轮次彻底结束（不再有重试 / 补充）时，把这一轮的改动追加到会话末尾。
+  // 纯展示：custom entry 不进 LLM 上下文，也不消耗 token。
+  pi.on("agent_settled", async () => {
+    const baseline = turnBaseline;
+    turnBaseline = null;
+    if (!reportSettings.inlineReport || !baseline) return;
+    try {
+      const report = await buildTurnReport(baseline);
+      if (report) pi.appendEntry(REPORT_ENTRY_TYPE, report);
+    } catch {
+      // 汇报失败不该影响 agent 本身
+    }
   });
 
   pi.registerTool({
@@ -702,6 +952,27 @@ export default function (pi: ExtensionAPI) {
       } catch {
         // 同上
       }
+    },
+  });
+
+  pi.registerCommand("diff-report", {
+    description: "在会话里直接汇报本轮改动（纯 git，不依赖 cmux）；/diff-report on|off 切换每轮自动汇报",
+    handler: async (args: string, ctx: any) => {
+      const raw = (args ?? "").trim().toLowerCase();
+      if (raw === "on" || raw === "off") {
+        reportSettings = { inlineReport: raw === "on" };
+        saveReportSettings(reportSettings);
+        ctx?.ui?.notify?.(`每轮自动汇报改动已${raw === "on" ? "开启" : "关闭"}。`, "info");
+        return;
+      }
+      const cwd = String(ctx?.cwd ?? sessionCwd);
+      const baseline = turnBaseline ?? (await captureTurnBaseline(cwd));
+      const report = baseline ? await buildTurnReport(baseline) : null;
+      if (!report) {
+        ctx?.ui?.notify?.("没有可汇报的改动：当前不是 git 仓库，或工作区相对基线没有变化。", "info");
+        return;
+      }
+      pi.appendEntry(REPORT_ENTRY_TYPE, report);
     },
   });
 }

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-11-07
+
+### 新增（会话内直接汇报本轮改动，不依赖任何外部软件）
+
+- **为什么**：面板模式离不开 cmux——cmux 得在跑、控制 socket 得放行、`last-turn` 还要求 pi 是从 cmux 里启动的。用户要的是「不依赖外部软件，pi 会话最后汇报时就把改动讲清楚」。查了 pi 的扩展 API，`pi.appendEntry()` + `pi.registerEntryRenderer()` 正好是为此设计的：自定义 entry 只落盘 + 渲染，不进 LLM 上下文、不消耗 token。
+- **改了什么**：新增「会话内汇报」这条线。① 每轮 `before_agent_start` 记基线：仓库根 + HEAD + `git stash create` 的游离提交（把基线时刻已跟踪文件的脏改动固化，不写 ref、不动工作区）+ 未跟踪文件的大小 / mtime 指纹；② 轮次彻底结束（`agent_settled`，不再有重试 / 补充）时用 `git diff --numstat` + `--name-status` 算这一轮的文件与行数，再补上「基线之后才出现的未跟踪文件」（按整份文件算新增行），生成一张卡片追加到会话末尾；③ 卡片不展开时最多列 8 个文件，展开看全部；④ 新增 `/diff-report` 命令：不带参数立刻出一次，`on` / `off` 切换每轮自动汇报（默认开，状态存 `~/.pi/agent/state/cmux-diff/settings.json`）。
+- **验证**：把扩展的函数抽到临时模块跑了三组真 git 场景（`node --experimental-strip-types`）——干净基线：改 1 文件 +2 −1、新增未跟踪文件 +3、删除文件 −2，全部算对；脏基线：基线前已有的改动不计入、只报基线之后新增的 +1；无改动时返回 null（不刷空卡片）。
+- **边界**：只给统计与状态字母（A / M / D / R），不给 patch 正文（要看正文仍用 `/open-diff` 面板）；基线上就已存在的未跟踪文件即使本轮又被改，也不会出现在汇报里（拿不到它的 diff 基准）；不是 git 仓库的会话静默跳过。
+
 ## [1.0.4] - 2026-11-07
 
 ### 修复（不在 cmux 里启动时也能用：自己找 app 内置 CLI + 说明 socket 权限）

@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.0.4-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.1.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -11,13 +11,14 @@
 
 # diff-view
 
-> Look at diffs from inside cmux with two slash commands: `/open-diff` to open, `/close-diff` to close.
+> Two independent ways to see what the agent changed: a cmux diff panel (`/open-diff` / `/close-diff`), or a diff report appended to the pi session itself (`/diff-report`, pure git, no external app).
 
 This is a pi extension. It does **not** render diffs itself — cmux (a Ghostty-based terminal) already ships a diff viewer: `cmux diff` turns a git diff into a panel, and `cmux close-surface` closes it. This extension just wraps those into two convenient commands and remembers which panels it opened, so closing is precise and never touches anything else.
 
 ## Why
 
-- With the cursor in a pi session, typing `/open-diff` is the fastest way to see what the agent just changed — no window switching, no remembering `cmux diff` flags.
+- **Panel mode** (`/open-diff`): with the cursor in a pi session, typing it is the fastest way to see what the agent just changed — no window switching, no remembering `cmux diff` flags.
+- **Inline report** (`/diff-report`): a card appended to the session after every turn with the files and line counts this turn touched. Pure git, no cmux, no external app, and it stays out of the LLM context so it costs no tokens.
 - The agent can call the `open_diff` / `close_diff` tools to show you its changes and clean up afterwards.
 - Closing only ever targets panels this extension registered. Your own diff panels, terminals, and everything else are left alone.
 
@@ -46,6 +47,10 @@ Pi sessions that were not started inside cmux (Ghostty, for example) work too: t
 /close-diff                 close panels opened by this session
 /close-diff --all           close panels opened by any session
 /close-diff ~/Developer/x   close only that repository's panels
+
+/diff-report                report this turn's changes inline, right now
+/diff-report off            stop the automatic report at the end of every turn
+/diff-report on             turn it back on (default: on)
 ```
 
 The four sources:
@@ -56,6 +61,8 @@ The four sources:
 | `unstaged` | Everything in the working tree vs HEAD | Always (default fallback) |
 | `staged` | Staged changes vs HEAD | Always |
 | `branch` | Current branch vs its base branch | Always (cmux picks the base) |
+
+The inline report is a custom session entry: it is written to the session file and rendered in the transcript, never sent to the model. It shows per-file status letters (A / M / D / R) and `+/-` counts, capped at 8 files until you expand it; a turn with no file changes prints nothing. Turn it off with `/diff-report off`, which persists in `~/.pi/agent/state/cmux-diff/settings.json`.
 
 On the agent side there are two matching tools: `open_diff` (`source` / `path`, **does not steal focus**) and `close_diff` (`path` / `all`). Typing a slash command focuses the panel because you asked for it; tool calls do not, because the agent did.
 
@@ -70,7 +77,7 @@ cmux's socket path can move around (environment variables go stale after an app 
 
 ## Known limits
 
-- **cmux only**: when cmux is not running the commands fail with a clear error instead of pretending to work. From a terminal that was not launched by cmux, cmux has to allow it first: the automation socket defaults to `cmuxOnly` and rejects outside processes with `Access denied`. Set `automation.socketControlMode` to `automation`, and the extension names that remedy in the error when the denial happens.
+- **The panel needs cmux; the inline report does not**: `/open-diff` / `/close-diff` only work while cmux is running. From a terminal that was not launched by cmux, cmux has to allow it first: the automation socket defaults to `cmuxOnly` and rejects outside processes with `Access denied`. Set `automation.socketControlMode` to `automation`, and the extension names that remedy in the error when the denial happens.
 - **Switching sources inside the panel is a cmux upstream bug**: the in-panel source switcher does not really recompute on "Last turn" (its sidecar does not support last-turn as a switchable source); it keeps the old content and spins forever. To view last-turn changes, open a fresh panel with `/open-diff last-turn`.
 - **last-turn needs a baseline**: cmux matches baselines on repository + workspace + surface + session. When any of those miss, `/open-diff` falls back to `unstaged` and says so.
 - **Window routing conflicts**: the root cause is fixed in the cmux CLI source we maintain (caller environment is no longer injected into panel routing). With a cmux build that contains the fix, `/open-diff` can use `last-turn` directly. For an older app that has not been updated yet, the extension keeps a minimal compatibility path: on `Conflicting Dock routing selectors` (or a related socket drop) it retries without the two environment variables and temporarily falls back from `last-turn` to `unstaged`, which it says in the prompt. The extension does not read or write any temporary directory. On retry the panel opens in cmux's default window, which with several windows open may not be the window the command came from.
