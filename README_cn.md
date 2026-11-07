@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.1.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.2.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -48,10 +48,23 @@
 /close-diff --all           关闭所有会话打开的面板
 /close-diff ~/Developer/x   只关该仓库的面板
 
-/diff-report                立刻汇报本轮改动
-/diff-report off            关掉「每轮结束自动汇报」
-/diff-report on             再打开（默认就是开）
+/diff-report                把上一轮 AI 改了什么贴进会话（本轮增量）
+/diff-report head           改看「工作区相对 HEAD 的全量未提交改动」
+/diff-report on             每轮结束自动贴（默认关）
+/diff-report off            取消自动贴
 ```
+
+### 命令行（完全不经过 pi）
+
+```bash
+diff-report                 当前仓库上一轮的改动
+diff-report --repo ~/x      指定仓库
+diff-report --all           每个有轮次报告的仓库各一行摘要
+diff-report --json          机器可读输出
+diff-report --since         用「一轮的基线 → 现在」重算（轮次结束后又改过东西时用）
+```
+
+`install.sh` 会把命令行工具拷到 `~/.local/bin/diff-report`。它只读扩展落盘的报告，不启动 pi、不触发任何轮次，任何终端里随时能敲。
 
 四个来源的差别：
 
@@ -62,7 +75,7 @@
 | `staged` | 暂存区相对 HEAD 的改动 | 始终可用 |
 | `branch` | 当前分支相对基线分支的改动 | 始终可用（基线由 cmux 自己挑） |
 
-两种口径：**自动卡片**报「本轮增量」（基线 = 你提交提示词那一刻）；**手敲 `/diff-report`** 报「工作区相对 HEAD 的全部未提交改动」，本轮正在进行时才退回本轮增量——标题会写明是哪一种，空结果也区分「不是 git 仓库」与「工作区是干净的」。
+报告口径固定是**本轮增量**：基线 = 你提交提示词那一刻，对比 = 这一轮结束时的状态。默认什么都不贴，要用就手敲 `/diff-report` 或跑 `diff-report` 命令；`/diff-report head` 是唯一的全量口径（工作区相对 HEAD 的全部未提交改动）。扩展把每轮的基线与结果落盘在 `~/.pi/agent/state/cmux-diff/`，命令行工具读的就是这份状态。
 
 会话内汇报是一张自定义 session entry：写进会话文件、在对话里渲染，永远不发给模型。它按文件列状态字母（A / M / D / R）与 `+/-` 行数，默认最多 8 个文件、展开看全部；本轮没有任何文件变化时不打印任何东西。`/diff-report off` 可关掉自动汇报（开关存在 `~/.pi/agent/state/cmux-diff/settings.json`）。
 
