@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.0.4-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.1.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -11,13 +11,14 @@
 
 # diff-view
 
-> 在 cmux 里用两条斜杠命令看 diff：`/open-diff` 打开，`/close-diff` 关闭。
+> 两种互不依赖的看改动方式：cmux 面板（`/open-diff`、`/close-diff`），或者直接汇报在 pi 会话里（`/diff-report`，纯 git、不依赖任何外部软件）。
 
 这是 pi 的一个扩展。它自己**不渲染 diff**——cmux（基于 Ghostty 的终端应用）自带 diff viewer，`cmux diff` 能把 git 改动直接渲染成面板，`cmux close-surface` 能把面板关掉。本扩展只负责把它们包成顺手的两条命令，并记住「哪些面板是自己开的」，好让关闭动作精确、不误伤。
 
 ## 为什么需要它
 
-- 光标停在 pi 会话里时，想快速看一眼「AI 刚才改了什么」，敲 `/open-diff` 就行，不用切窗口、不用记 `cmux diff` 的参数；
+- **面板模式**（`/open-diff`）：光标停在 pi 会话里时，想快速看一眼「AI 刚才改了什么」，敲它就行，不用切窗口、不用记 `cmux diff` 的参数；
+- **会话内汇报**（`/diff-report`）：每轮结束时在会话末尾追加一张卡片，列出这一轮改了哪些文件、加减多少行。纯 git，不需要 cmux，也不进 LLM 上下文、不耗 token。
 - AI 也能调用 `open_diff` / `close_diff` 两个工具，在需要给你看改动时自己开、看完自己关；
 - 关闭只针对本扩展登记过的面板，用户自己开的 diff、普通终端、其它面板一律不碰。
 
@@ -46,6 +47,10 @@
 /close-diff                 关闭本会话打开的面板
 /close-diff --all           关闭所有会话打开的面板
 /close-diff ~/Developer/x   只关该仓库的面板
+
+/diff-report                立刻汇报本轮改动
+/diff-report off            关掉「每轮结束自动汇报」
+/diff-report on             再打开（默认就是开）
 ```
 
 四个来源的差别：
@@ -56,6 +61,8 @@
 | `unstaged` | 工作区相对 HEAD 的全部改动 | 始终可用（默认后备） |
 | `staged` | 暂存区相对 HEAD 的改动 | 始终可用 |
 | `branch` | 当前分支相对基线分支的改动 | 始终可用（基线由 cmux 自己挑） |
+
+会话内汇报是一张自定义 session entry：写进会话文件、在对话里渲染，永远不发给模型。它按文件列状态字母（A / M / D / R）与 `+/-` 行数，默认最多 8 个文件、展开看全部；本轮没有任何文件变化时不打印任何东西。`/diff-report off` 可关掉自动汇报（开关存在 `~/.pi/agent/state/cmux-diff/settings.json`）。
 
 AI 侧对应两个工具：`open_diff`（参数 `source` / `path`，**不抢焦点**）和 `close_diff`（参数 `path` / `all`）。你手敲斜杠命令时会切到面板，AI 调工具时不会——抢不抢焦点按「谁发起的」区分。
 
@@ -70,7 +77,7 @@ cmux 的 socket 路径偶有变化（app 重启后环境变量可能过期）：
 
 ## 已知边界
 
-- **只服务 cmux**：cmux 没在跑时直接报错，不假装成功。从不是 cmux 启动的终端里用时，还得 cmux 那边放行——自动化 socket 默认 `cmuxOnly`，外部进程会被拒（`Access denied`）；把 `automation.socketControlMode` 设成 `automation` 即可，扩展在报错里会写明这个原因和改法。
+- **面板必须靠 cmux，会话内汇报不需要**：`/open-diff` / `/close-diff` 只在 cmux 在跑时可用。从不是 cmux 启动的终端里用时，还得 cmux 那边放行——自动化 socket 默认 `cmuxOnly`，外部进程会被拒（`Access denied`）；把 `automation.socketControlMode` 设成 `automation` 即可，扩展在报错里会写明这个原因和改法。
 - **面板内切 source 是 cmux 上游的坑**：cmux 的 diff 面板里有个 source 切换器，点「Last turn」不会真正重算（其 sidecar 不支持 last-turn 作为可切换来源），只会停在原内容并一直转圈。要看 last-turn，请用 `/open-diff last-turn` 重新开一个面板，不要在旧面板里切。
 - **last-turn 依赖基线**：基线按「仓库 + workspace + surface + 会话」四条匹配，任何一条对不上就拿不到内容。这时 `/open-diff` 会自动退回 `unstaged` 并告诉你原因。
 - **窗口路由冲突**：根因已在自己维护的 cmux CLI 源码里修好（不再把环境变量注入面板路由），装上含该修复的 cmux 后，`/open-diff` 的 `last-turn` 直接可用。对尚未更新的旧版 app，扩展保留一段极简兼容：命中 `Conflicting Dock routing selectors`（或同类 socket 断连）时去掉两个环境变量重试，`last-turn` 暂时退到 `unstaged` 并在提示里写明。扩展不读写任何临时目录。重试时面板落在 cmux 的默认窗口，开了多个窗口时可能不是发起命令的那个窗口。
