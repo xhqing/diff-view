@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - **为什么**：用户要的是「本轮增量（turn diff）」，但**由他手动触发**，不是每轮自动贴；而 `/diff-report` 之前拿不到本轮结果——基线在轮次结束时就被消费掉了，命令只能临时抓一个「现在」当基线，于是永远报「没有可汇报的改动」。再加一层：他想在终端里随便敲个命令就看，不触发 pi 的任何轮次。
 - **改了什么**：① 每轮基线（仓库根 / HEAD / `git stash create` 快照 / 未跟踪文件指纹）改成**落盘**到 `~/.pi/agent/state/cmux-diff/turn-baseline.json`（按会话 id）；② 轮次结束时算出「本轮增量」并落盘到 `last-turn.json`（按仓库根），**默认不再自动贴卡片**（`inlineReport` 默认 false，要就 `/diff-report on`）；③ `/diff-report` 默认贴「上一轮的落盘报告」，本轮正在跑时贴当前进度，`/diff-report head` 才看「工作区相对 HEAD 的全量」；④ 新增 `scripts/diff-report`（Python 3，无第三方依赖）并让 `install.sh` 装到 `~/.local/bin/`：读落盘状态直接打印，支持 `--repo` / `--all` / `--json` / `--since`，完全不启动 pi、不触发轮次。
+- **修掉时间戳单位不一致**：扩展写的是 JS 的毫秒（`Date.now()`），CLI 按秒解析，直接跑会炸 `year 58820 is out of range`；CLI 里统一折成秒再格式化，排序也按秒算。
 - **验证**：见下一条目里的 CLI 与扩展场景验证。
 - **边界**：CLI 只读扩展落盘的结果，所以必须先在某个仓库里跑过至少一轮带文件改动的 pi 任务；`--since` 用的是落盘基线，若基线已被后续轮次覆盖，结果会从那一轮的起点算起。
 
