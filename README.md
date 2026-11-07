@@ -60,9 +60,12 @@ Pi sessions that were not started inside cmux (Ghostty, for example) work too: t
 diff-report                 the previous turn's changes for the repo you are in
 diff-report --repo ~/x      same for another repo
 diff-report --all           one line per repo that has a turn report
+diff-report --turn 2        one turn further back (1 = the latest)
 diff-report --json          machine-readable output
 diff-report --since         recompute "turn baseline -> now" (when files changed after the turn)
 ```
+
+Each repo keeps its last 20 turns, so looking at an older one with `--turn` works too, and a turn that changed nothing no longer wipes the previous report.
 
 `install.sh` copies the CLI to `~/.local/bin/diff-report`. It only reads the report the extension persisted, so it never starts a pi session, never touches a turn, and works in any terminal.
 
