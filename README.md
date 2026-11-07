@@ -62,6 +62,8 @@ The four sources:
 | `staged` | Staged changes vs HEAD | Always |
 | `branch` | Current branch vs its base branch | Always (cmux picks the base) |
 
+Two scopes: the automatic card reports **this turn's delta** (baseline taken when your prompt was submitted), while typing `/diff-report` yourself reports **everything uncommitted vs HEAD** -- during a running turn it falls back to the turn delta. The title says which one you are looking at.
+
 The inline report is a custom session entry: it is written to the session file and rendered in the transcript, never sent to the model. It shows per-file status letters (A / M / D / R) and `+/-` counts, capped at 8 files until you expand it; a turn with no file changes prints nothing. Turn it off with `/diff-report off`, which persists in `~/.pi/agent/state/cmux-diff/settings.json`.
 
 On the agent side there are two matching tools: `open_diff` (`source` / `path`, **does not steal focus**) and `close_diff` (`path` / `all`). Typing a slash command focuses the panel because you asked for it; tool calls do not, because the agent did.

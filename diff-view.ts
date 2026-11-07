@@ -643,12 +643,16 @@ interface ReportFile {
   binary?: boolean;
 }
 
+/** 这次汇报的对照口径：`turn` = 相对本轮基线，`head` = 相对当前 HEAD 的全部未提交改动。 */
+type ReportScope = "turn" | "head";
+
 interface ReportData {
   repoName: string;
   repoRoot: string;
   files: ReportFile[];
   added: number;
   deleted: number;
+  scope: ReportScope;
 }
 
 function fingerprintFile(absPath: string): string {
@@ -707,8 +711,23 @@ async function captureTurnBaseline(cwd: string): Promise<TurnBaseline | null> {
   return { repoRoot, head, snapshot, untracked };
 }
 
+/**
+ * 「相对 HEAD」的基线：不固化了工作区快照，untracked 也当作新文件，
+ * 用来回答「现在工作区里一共有哪些未提交改动」——手敲 `/diff-report` 时用这个口径。
+ * 注意它跟自动汇报的「本轮增量」不是一回事。
+ */
+async function captureHeadBaseline(cwd: string): Promise<TurnBaseline | null> {
+  const repoRoot = await gitRoot(cwd);
+  if (!repoRoot) return null;
+  const headResult = await run("git", ["rev-parse", "HEAD"], repoRoot, 10_000);
+  if (!headResult.ok) return null;
+  const head = headResult.stdout.trim();
+  if (!head) return null;
+  return { repoRoot, head, snapshot: null, untracked: {} };
+}
+
 /** 算出「相对基线改了什么」；没有任何改动时返回 null。 */
-async function buildTurnReport(baseline: TurnBaseline): Promise<ReportData | null> {
+async function buildTurnReport(baseline: TurnBaseline, scope: ReportScope = "turn"): Promise<ReportData | null> {
   const { repoRoot, head, snapshot } = baseline;
   const base = snapshot ?? head;
   const numstat = await run("git", ["diff", "--numstat", base], repoRoot, 20_000);
@@ -759,7 +778,7 @@ async function buildTurnReport(baseline: TurnBaseline): Promise<ReportData | nul
 
   if (files.length === 0) return null;
   files.sort((left, right) => right.added + right.deleted - (left.added + left.deleted));
-  return { repoName: path.basename(repoRoot), repoRoot, files, added, deleted };
+  return { repoName: path.basename(repoRoot), repoRoot, files, added, deleted, scope };
 }
 
 /** 注册会话内汇报的渲染器（Box + Text，跟其它扩展卡片一个风格）。 */
@@ -769,12 +788,15 @@ function registerReportRenderer(pi: ExtensionAPI): void {
     const data = entry?.data as ReportData | undefined;
     const box = new Box(1, 1, (text: string) => theme.bg("customMessageBg", text));
     if (!data || data.files.length === 0) {
-      box.addChild(new Text(theme.fg("dim", "本轮改动：没有文件变化"), 0, 0));
+      box.addChild(new Text(theme.fg("dim", "没有文件变化"), 0, 0));
       return box;
     }
     box.addChild(
       new Text(
-        theme.fg("accent", `本轮改动 · ${data.files.length} 个文件 · +${data.added} -${data.deleted} · ${data.repoName}`),
+        theme.fg(
+          "accent",
+          `${data.scope === "head" ? "工作区改动（相对 HEAD）" : "本轮改动"} · ${data.files.length} 个文件 · +${data.added} -${data.deleted} · ${data.repoName}`,
+        ),
         0,
         0,
       ),
@@ -966,10 +988,25 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const cwd = String(ctx?.cwd ?? sessionCwd);
-      const baseline = turnBaseline ?? (await captureTurnBaseline(cwd));
-      const report = baseline ? await buildTurnReport(baseline) : null;
+      // 本轮正在进行（有本轮基线）→ 报本轮增量；否则报「工作区相对 HEAD 的全部未提交改动」。
+      // 后者是手敲命令时的常态：轮次已经结束，本轮基线已经用掉了。
+      let report: ReportData | null = null;
+      if (turnBaseline) {
+        report = await buildTurnReport(turnBaseline, "turn");
+      } else {
+        const headBaseline = await captureHeadBaseline(cwd);
+        if (!headBaseline) {
+          ctx?.ui?.notify?.("没有可汇报的改动：当前目录不是 git 仓库（或仓库还没有任何提交）。", "info");
+          return;
+        }
+        report = await buildTurnReport(headBaseline, "head");
+        if (!report) {
+          ctx?.ui?.notify?.("没有可汇报的改动：工作区相对 HEAD 是干净的。", "info");
+          return;
+        }
+      }
       if (!report) {
-        ctx?.ui?.notify?.("没有可汇报的改动：当前不是 git 仓库，或工作区相对基线没有变化。", "info");
+        ctx?.ui?.notify?.("没有可汇报的改动。", "info");
         return;
       }
       pi.appendEntry(REPORT_ENTRY_TYPE, report);
