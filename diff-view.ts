@@ -492,7 +492,7 @@ async function closeDiff(options: CloseOptions): Promise<OpenResult> {
   const closed: string[] = [];
   const failed: string[] = [];
   for (const panel of targets) {
-    const result = await runCmux(["close-surface", "--surface", panel.surface], panel.cwd, 20_000);
+    const result = await closePanel(panel);
     // "Surface ref not found" 说明面板已经被用户手动关掉了——按已关闭处理，清掉登记
     if (result.ok || /not found|unknown surface/i.test(result.stderr)) {
       closed.push(panel.surface);
@@ -508,6 +508,54 @@ async function closeDiff(options: CloseOptions): Promise<OpenResult> {
   if (closed.length) lines.push(`已关闭 ${closed.length} 个 diff 面板。`);
   if (failed.length) lines.push(`有 ${failed.length} 个没关掉：\n${failed.map((item) => `  - ${item}`).join("\n")}`);
   return { ok: failed.length === 0, message: lines.join("\n") || "没有变化。" };
+}
+
+/**
+ * 找出某个 surface 所在的窗口句柄。
+ *
+ * `cmux close-surface --surface <ref>` 只有在能推断调用者上下文时才不用带
+ * `--workspace` / `--window`（env 里的 `CMUX_WORKSPACE_ID` 或 cwd 匹配到某个 workspace）。
+ * 从外部终端（Ghostty 里的 pi）调时两个都没有，CLI 直接报
+ * 「close-surface requires --workspace or --window with explicit --surface」。
+ * 这里遍历窗口的 panel 列表找到它属于哪个窗口，然后带上 `--window` 重试。
+ */
+async function findSurfaceWindow(surfaceRef: string): Promise<string | null> {
+  const windows = await runCmux(["list-windows", "--json"], undefined, 15_000);
+  if (!windows.ok) return null;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(windows.stdout);
+  } catch {
+    return null;
+  }
+  const list: any[] = Array.isArray(parsed) ? parsed : (parsed?.windows ?? []);
+  for (const item of list) {
+    const handle = String(item?.index ?? item?.id ?? "").trim();
+    if (!handle) continue;
+    const panels = await runCmux(["list-panels", "--window", handle, "--json"], undefined, 15_000);
+    if (!panels.ok) continue;
+    try {
+      const surfaces: any[] = JSON.parse(panels.stdout)?.surfaces ?? [];
+      if (surfaces.some((surface) => surface?.ref === surfaceRef || surface?.id === surfaceRef)) {
+        return handle;
+      }
+    } catch {
+      // 解析失败就换下一个窗口
+    }
+  }
+  return null;
+}
+
+/** 关掉一个已登记的面板；外部终端里缺调用者上下文时先定位窗口再重试。 */
+async function closePanel(panel: OpenedPanel): Promise<RunResult> {
+  const first = await runCmux(["close-surface", "--surface", panel.surface], panel.cwd, 20_000);
+  if (first.ok) return first;
+  const needsWindow =
+    /requires --workspace or --window/i.test(first.stderr) || /requires --workspace/i.test(first.error ?? "");
+  if (!needsWindow) return first;
+  const windowHandle = await findSurfaceWindow(panel.surface);
+  if (!windowHandle) return first;
+  return runCmux(["close-surface", "--window", windowHandle, "--surface", panel.surface], panel.cwd, 20_000);
 }
 
 // ===== 扩展入口 =====
