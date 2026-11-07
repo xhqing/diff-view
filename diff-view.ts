@@ -518,22 +518,29 @@ async function closeDiff(options: CloseOptions): Promise<OpenResult> {
  * 从外部终端（Ghostty 里的 pi）调时两个都没有，CLI 直接报
  * 「close-surface requires --workspace or --window with explicit --surface」。
  * 这里遍历窗口的 panel 列表找到它属于哪个窗口，然后带上 `--window` 重试。
+ *
+ * 返回三种结果：窗口句柄（找到了）／ `null`（把能查的窗口都查过，那里没有这个 surface——
+ * 面板早就不在了）／ `undefined`（cmux 连不上或列表读不出来，判断不了）。
+ * 调用方靠这个区分「已经关掉了」与「真出错了」，不能混为一谈。
  */
-async function findSurfaceWindow(surfaceRef: string): Promise<string | null> {
+async function findSurfaceWindow(surfaceRef: string): Promise<string | null | undefined> {
   const windows = await runCmux(["list-windows", "--json"], undefined, 15_000);
-  if (!windows.ok) return null;
+  if (!windows.ok) return undefined;
   let parsed: any;
   try {
     parsed = JSON.parse(windows.stdout);
   } catch {
-    return null;
+    return undefined;
   }
   const list: any[] = Array.isArray(parsed) ? parsed : (parsed?.windows ?? []);
+  if (list.length === 0) return undefined;
+  let listed = 0;
   for (const item of list) {
     const handle = String(item?.index ?? item?.id ?? "").trim();
     if (!handle) continue;
     const panels = await runCmux(["list-panels", "--window", handle, "--json"], undefined, 15_000);
     if (!panels.ok) continue;
+    listed += 1;
     try {
       const surfaces: any[] = JSON.parse(panels.stdout)?.surfaces ?? [];
       if (surfaces.some((surface) => surface?.ref === surfaceRef || surface?.id === surfaceRef)) {
@@ -543,7 +550,9 @@ async function findSurfaceWindow(surfaceRef: string): Promise<string | null> {
       // 解析失败就换下一个窗口
     }
   }
-  return null;
+  // 至少成功列出过一个窗口的 panel，且哪儿都没这个 surface：面板已经被关掉了。
+  // 一个都没列出来就当作「判断不了」，别把清理当成成功。
+  return listed > 0 ? null : undefined;
 }
 
 /** 关掉一个已登记的面板；外部终端里缺调用者上下文时先定位窗口再重试。 */
@@ -554,7 +563,11 @@ async function closePanel(panel: OpenedPanel): Promise<RunResult> {
     /requires --workspace or --window/i.test(first.stderr) || /requires --workspace/i.test(first.error ?? "");
   if (!needsWindow) return first;
   const windowHandle = await findSurfaceWindow(panel.surface);
-  if (!windowHandle) return first;
+  // 查询失败：保留原错误，交给调用方报告
+  if (windowHandle === undefined) return first;
+  // 面板已经不在任何窗口里（手动关掉 / cmux 重启过）：按已关闭处理，
+  // 让登记跟着清掉，而不是报一个用户在界面上根本看不到的「没关掉」。
+  if (windowHandle === null) return { ok: true, stdout: "", stderr: "", code: 0 };
   return runCmux(["close-surface", "--window", windowHandle, "--surface", panel.surface], panel.cwd, 20_000);
 }
 
