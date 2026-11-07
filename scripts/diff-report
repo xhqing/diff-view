@@ -35,6 +35,17 @@ BASELINE_FILE = STATE_DIR / "turn-baseline.json"
 KIND_MARK = {"added": "A", "deleted": "D", "renamed": "R", "modified": "M"}
 
 
+def to_seconds(value) -> float | None:
+    """扩展用的是 JS 的 Date.now()（毫秒），这里统一折成秒再格式化。"""
+    try:
+        stamp = float(value)
+    except (TypeError, ValueError):
+        return None
+    if stamp <= 0:
+        return None
+    return stamp / 1000 if stamp > 1e11 else stamp
+
+
 def die(message: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
     print(message, file=sys.stderr)
     raise SystemExit(code)
@@ -72,8 +83,9 @@ def fmt_report(report: dict, generated_at: float | None) -> str:
         mark = KIND_MARK.get(str(item.get("kind")), "M")
         stat = "二进制" if item.get("binary") else f"+{item.get('added', 0)} -{item.get('deleted', 0)}"
         lines.append(f"  {mark} {str(item.get('path', '')).ljust(width)}  {stat}")
-    if generated_at:
-        stamp = datetime.fromtimestamp(generated_at).strftime("%Y-%m-%d %H:%M:%S")
+    seconds = to_seconds(generated_at)
+    if seconds:
+        stamp = datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
         lines.append(f"生成于 {stamp} · {report.get('repoRoot', '')}")
     return "\n".join(lines)
 
@@ -92,7 +104,7 @@ def recompute_since_baseline(root: str) -> dict | None:
     candidates = [item for item in state.values() if str(item.get("repoRoot", "")) == root]
     if not candidates:
         return None
-    baseline = max(candidates, key=lambda item: item.get("capturedAt") or 0)
+    baseline = max(candidates, key=lambda item: to_seconds(item.get("capturedAt")) or 0)
     base = baseline.get("snapshot") or baseline.get("head")
     if not base:
         return None
@@ -176,7 +188,7 @@ def main(argv: list[str]) -> int:
         if as_json:
             print(json.dumps(state, ensure_ascii=False, indent=2))
             return 0
-        for report in sorted(state.values(), key=lambda item: item.get("generatedAt") or 0, reverse=True):
+        for report in sorted(state.values(), key=lambda item: to_seconds(item.get("generatedAt")) or 0, reverse=True):
             print(summarize(report))
         return 0
 
