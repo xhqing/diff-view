@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.1.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.2.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -48,10 +48,23 @@ Pi sessions that were not started inside cmux (Ghostty, for example) work too: t
 /close-diff --all           close panels opened by any session
 /close-diff ~/Developer/x   close only that repository's panels
 
-/diff-report                report this turn's changes inline, right now
-/diff-report off            stop the automatic report at the end of every turn
-/diff-report on             turn it back on (default: on)
+/diff-report                paste the previous turn's changes (turn diff) into the session
+/diff-report head           show everything uncommitted vs HEAD instead
+/diff-report on             also paste it automatically at the end of every turn (default: off)
+/diff-report off            stop that
 ```
+
+### Command line (no pi involved)
+
+```bash
+diff-report                 the previous turn's changes for the repo you are in
+diff-report --repo ~/x      same for another repo
+diff-report --all           one line per repo that has a turn report
+diff-report --json          machine-readable output
+diff-report --since         recompute "turn baseline -> now" (when files changed after the turn)
+```
+
+`install.sh` copies the CLI to `~/.local/bin/diff-report`. It only reads the report the extension persisted, so it never starts a pi session, never touches a turn, and works in any terminal.
 
 The four sources:
 
@@ -62,7 +75,7 @@ The four sources:
 | `staged` | Staged changes vs HEAD | Always |
 | `branch` | Current branch vs its base branch | Always (cmux picks the base) |
 
-Two scopes: the automatic card reports **this turn's delta** (baseline taken when your prompt was submitted), while typing `/diff-report` yourself reports **everything uncommitted vs HEAD** -- during a running turn it falls back to the turn delta. The title says which one you are looking at.
+The report is always **turn diff**: baseline taken when your prompt was submitted, compared with the state when the turn ended. Nothing is pasted by default; ask for it with `/diff-report` or the `diff-report` CLI. `/diff-report head` is the only cumulative view (everything uncommitted vs HEAD). The extension persists each turn's baseline and result under `~/.pi/agent/state/cmux-diff/`, which is what the CLI reads.
 
 The inline report is a custom session entry: it is written to the session file and rendered in the transcript, never sent to the model. It shows per-file status letters (A / M / D / R) and `+/-` counts, capped at 8 files until you expand it; a turn with no file changes prints nothing. Turn it off with `/diff-report off`, which persists in `~/.pi/agent/state/cmux-diff/settings.json`.
 

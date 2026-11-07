@@ -591,6 +591,10 @@ async function closePanel(panel: OpenedPanel): Promise<RunResult> {
 
 /** 会话内汇报的开关文件（跨会话共享）。 */
 const SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
+/** 本轮基线（按会话 id 存，落盘后 CLI 也能读）。 */
+const BASELINE_STATE_FILE = path.join(STATE_DIR, "turn-baseline.json");
+/** 上一个已完成轮次的报告（按仓库根存，供 `/diff-report` 与 CLI 读取）。 */
+const LAST_REPORT_FILE = path.join(STATE_DIR, "last-turn.json");
 /** 会话内汇报的 entry 类型（pi.appendEntry 的自定义类型）。 */
 const REPORT_ENTRY_TYPE = "diff-view-report";
 /** 不展开时最多列几个文件。 */
@@ -604,9 +608,10 @@ interface ReportSettings {
 function loadReportSettings(): ReportSettings {
   try {
     const parsed = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
-    return { inlineReport: parsed?.inlineReport !== false };
+    return { inlineReport: parsed?.inlineReport === true };
   } catch {
-    return { inlineReport: true };
+    // 默认不主动出卡片：要就手敲 `/diff-report`（或跑 CLI），不要就别打扰。
+    return { inlineReport: false };
   }
 }
 
@@ -616,6 +621,25 @@ function saveReportSettings(settings: ReportSettings): void {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
   } catch {
     // 写不进去只影响下次启动的默认值，不影响本次会话
+  }
+}
+
+function readJsonFile<T>(file: string): T | null {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeJsonFile(file: string, data: unknown): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp.${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+    fs.renameSync(tmp, file);
+  } catch {
+    // 状态写不进去只影响 CLI 与下次读取，不影响本次会话
   }
 }
 
@@ -709,6 +733,44 @@ async function captureTurnBaseline(cwd: string): Promise<TurnBaseline | null> {
     }
   }
   return { repoRoot, head, snapshot, untracked };
+}
+
+interface BaselineState {
+  version: number;
+  sessions: Record<string, TurnBaseline & { sessionId: string; capturedAt: number }>;
+}
+
+interface LastReportState {
+  version: number;
+  repos: Record<string, ReportData & { sessionId: string; generatedAt: number }>;
+}
+
+/** 把本轮基线按会话 id 落盘：CLI 与手敲命令都靠它拿「这一轮从哪儿开始」。 */
+function persistBaseline(sessionKey: string, baseline: TurnBaseline): void {
+  const state = readJsonFile<BaselineState>(BASELINE_STATE_FILE) ?? { version: 1, sessions: {} };
+  state.version = 1;
+  state.sessions[sessionKey] = { ...baseline, sessionId: sessionKey, capturedAt: Date.now() };
+  // 只留最近 20 个会话，避免长期堆积
+  const keys = Object.keys(state.sessions);
+  if (keys.length > 20) {
+    keys
+      .sort((left, right) => (state.sessions[left].capturedAt ?? 0) - (state.sessions[right].capturedAt ?? 0))
+      .slice(0, keys.length - 20)
+      .forEach((key) => delete state.sessions[key]);
+  }
+  writeJsonFile(BASELINE_STATE_FILE, state);
+}
+
+/** 存下上一轮的报告；本轮没有改动时清掉该仓库的旧条目，免得 CLI 报上一轮的内容。 */
+function persistLastReport(sessionKey: string, repoRoot: string, report: ReportData | null): void {
+  const state = readJsonFile<LastReportState>(LAST_REPORT_FILE) ?? { version: 1, repos: {} };
+  state.version = 1;
+  if (report) {
+    state.repos[repoRoot] = { ...report, sessionId: sessionKey, generatedAt: Date.now() };
+  } else {
+    delete state.repos[repoRoot];
+  }
+  writeJsonFile(LAST_REPORT_FILE, state);
 }
 
 /**
@@ -836,25 +898,29 @@ export default function (pi: ExtensionAPI) {
     sessionCwd = String(ctx?.cwd ?? process.cwd());
   });
 
-  // 每轮用户提示开始时记基线：之后算「这一轮改了什么」就靠它。
+  // 每轮用户提示开始时记基线：之后算「这一轮改了什么」就靠它。基线同时落盘，
+  // 这样轮次结束以后（甚至换了进程）CLI 也能按仓库把它捞回来重算。
   pi.on("before_agent_start", async (_event: any, ctx: any) => {
     const cwd = String(ctx?.cwd ?? sessionCwd);
     try {
       turnBaseline = await captureTurnBaseline(cwd);
+      if (turnBaseline) persistBaseline(sessionId, turnBaseline);
     } catch {
       turnBaseline = null;
     }
   });
 
-  // 轮次彻底结束（不再有重试 / 补充）时，把这一轮的改动追加到会话末尾。
-  // 纯展示：custom entry 不进 LLM 上下文，也不消耗 token。
+  // 轮次彻底结束（不再有重试 / 补充）时算一次「本轮增量」：结果落盘给 `/diff-report`
+  // 和 `diff-report` CLI 读；只有开了自动汇报（默认关）才顺手往会话里追加一张卡片。
+  // 卡片是 custom entry：不进 LLM 上下文，也不消耗 token。
   pi.on("agent_settled", async () => {
     const baseline = turnBaseline;
     turnBaseline = null;
-    if (!reportSettings.inlineReport || !baseline) return;
+    if (!baseline) return;
     try {
-      const report = await buildTurnReport(baseline);
-      if (report) pi.appendEntry(REPORT_ENTRY_TYPE, report);
+      const report = await buildTurnReport(baseline, "turn");
+      persistLastReport(sessionId, baseline.repoRoot, report);
+      if (reportSettings.inlineReport && report) pi.appendEntry(REPORT_ENTRY_TYPE, report);
     } catch {
       // 汇报失败不该影响 agent 本身
     }
@@ -978,22 +1044,19 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("diff-report", {
-    description: "在会话里直接汇报本轮改动（纯 git，不依赖 cmux）；/diff-report on|off 切换每轮自动汇报",
+    description: "把上一轮 AI 改了什么贴进会话（纯 git，不依赖 cmux）；on|off 切换每轮结束自动贴，head 看工作区相对 HEAD 的全量",
     handler: async (args: string, ctx: any) => {
       const raw = (args ?? "").trim().toLowerCase();
       if (raw === "on" || raw === "off") {
         reportSettings = { inlineReport: raw === "on" };
         saveReportSettings(reportSettings);
-        ctx?.ui?.notify?.(`每轮自动汇报改动已${raw === "on" ? "开启" : "关闭"}。`, "info");
+        ctx?.ui?.notify?.(`每轮结束自动贴改动卡片已${raw === "on" ? "开启" : "关闭"}。`, "info");
         return;
       }
       const cwd = String(ctx?.cwd ?? sessionCwd);
-      // 本轮正在进行（有本轮基线）→ 报本轮增量；否则报「工作区相对 HEAD 的全部未提交改动」。
-      // 后者是手敲命令时的常态：轮次已经结束，本轮基线已经用掉了。
       let report: ReportData | null = null;
-      if (turnBaseline) {
-        report = await buildTurnReport(turnBaseline, "turn");
-      } else {
+      if (raw === "head") {
+        // 可选口径：工作区相对 HEAD 的全部未提交改动（不是「本轮」，要看总量时用）
         const headBaseline = await captureHeadBaseline(cwd);
         if (!headBaseline) {
           ctx?.ui?.notify?.("没有可汇报的改动：当前目录不是 git 仓库（或仓库还没有任何提交）。", "info");
@@ -1004,10 +1067,24 @@ export default function (pi: ExtensionAPI) {
           ctx?.ui?.notify?.("没有可汇报的改动：工作区相对 HEAD 是干净的。", "info");
           return;
         }
-      }
-      if (!report) {
-        ctx?.ui?.notify?.("没有可汇报的改动。", "info");
-        return;
+      } else if (turnBaseline) {
+        // 本轮还在跑（有内存基线）→ 直接算当前进度
+        report = await buildTurnReport(turnBaseline, "turn");
+      } else {
+        // 轮次已结束 → 读「上一轮」落盘的报告（本轮基线在结束时就用掉了）
+        const repoRoot = await gitRoot(cwd);
+        if (!repoRoot) {
+          ctx?.ui?.notify?.("没有可汇报的改动：当前目录不是 git 仓库（或仓库还没有任何提交）。", "info");
+          return;
+        }
+        report = readJsonFile<LastReportState>(LAST_REPORT_FILE)?.repos?.[repoRoot] ?? null;
+        if (!report) {
+          ctx?.ui?.notify?.(
+            "这个仓库还没有可汇报的轮次：跑一轮带文件改动的任务后再来（或直接跑 `diff-report` 命令）。",
+            "info",
+          );
+          return;
+        }
       }
       pi.appendEntry(REPORT_ENTRY_TYPE, report);
     },
