@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.2.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.3.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -50,6 +50,7 @@
 
 /diff-report                把上一轮 AI 改了什么贴进会话（本轮增量）
 /diff-report head           改看「工作区相对 HEAD 的全量未提交改动」
+/diff-report patch          把这一轮的 unified diff 贴进会话
 /diff-report on             每轮结束自动贴（默认关）
 /diff-report off            取消自动贴
 ```
@@ -60,12 +61,13 @@
 diff-report                 当前仓库上一轮的改动
 diff-report --repo ~/x      指定仓库
 diff-report --all           每个有轮次报告的仓库各一行摘要
+diff-report --patch         连同这一轮的具体改动（unified diff）一起打印
 diff-report --turn 2        看再往前一轮（1 = 最近一轮）
 diff-report --json          机器可读输出
 diff-report --since         用「一轮的基线 → 现在」重算（轮次结束后又改过东西时用）
 ```
 
-每个仓库保留最近 20 轮，所以 `--turn` 能翻更早的；没有文件改动的轮次也不会再把上一轮的报告冲掉。
+每个仓库保留最近 20 轮，并且每轮连同它的 unified diff 一起存（单轮上限 80 KB），所以 `--turn` 能翻更早的；没有文件改动的轮次也不会再把上一轮的报告冲掉。
 
 `install.sh` 会把命令行工具拷到 `~/.local/bin/diff-report`。它只读扩展落盘的报告，不启动 pi、不触发任何轮次，任何终端里随时能敲。
 
