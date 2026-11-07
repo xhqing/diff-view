@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2026-11-07
+
+### 修复（不在 cmux 里启动时也能用：自己找 app 内置 CLI + 说明 socket 权限）
+
+- **为什么**：在 Ghostty 里跑的 pi 会话敲 `/open-diff` 直接报「连不上 cmux」，报错里只有 cmux 的 `Access denied - only processes started inside cmux can connect`。两个原因叠在一起：① 扩展找 CLI 只看 `CMUX_BUNDLED_CLI_PATH`（只有 cmux 启动的进程才有）和 PATH 上的 `cmux`（本机没装），在别的终端里根本找不到二进制；② cmux 的自动化 socket 默认 `cmuxOnly`，只接受 cmux 自己启动的进程树，外部进程一律拒。前者是扩展的锅，后者是 cmux 的默认安全档位。
+- **改了什么**：① `cmuxCandidates()` 增加 app 包内 CLI 的发现——扫 `/Applications` 与 `~/Applications` 下的 `cmux*.app`，取 `Contents/Resources/bin/cmux`（release / staging 并存时全收）；② `runCmux()` 改成「候选 CLI × 候选 socket」矩阵重试：先按默认解析试（CLI 自己读 marker 文件），失败再显式带 `--socket` 逐个重试，这样才能配对上「哪个 app 真在跑」；③ 命中 `Access denied` 时，报错里直接写明原因是 `automation.socketControlMode = cmuxOnly`，以及改成 `automation` 或改在 cmux 里启动 pi 两种解法。
+- **验证**：`node --experimental-strip-types --check diff-view.ts` 通过；在本机 Ghostty 会话（无 `CMUX_BUNDLED_CLI_PATH`、PATH 无 `cmux`）实测发现到 `/Applications/cmux STAGING xhqing.app/Contents/Resources/bin/cmux`，配合 `/tmp/cmux-staging-xhqing.sock` 能列出窗口；cmux 侧把 `automation.socketControlMode` 设成 `automation` 后，同一条命令从「Access denied」变为正常返回。
+- **边界**：`automation` 档放开到「同一 macOS 用户的本地进程」，等于本机任何同用户进程都能控制 cmux（含往终端里发命令）；共用机器建议保持 `cmuxOnly`、把 pi 放在 cmux 里跑。
+
 ## [1.0.3] - 2026-11-06
 
 ### 变更（撤回临时 patch 中转，根因改在 cmux CLI 源码修复）

@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="diff-view" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.0.3-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-1.0.4-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
 
@@ -30,6 +30,8 @@
 脚本把 `diff-view.ts` 拷到 `~/.pi/agent/extensions/diff-view.ts`。新会话自动生效；已经打开的 pi 会话执行 `/reload`。
 
 要求：macOS + cmux 正在运行（面板由 cmux 渲染，扩展只是命令层）。卸载删掉那个文件即可。
+
+不在 cmux 里启动的 pi 会话（比如在 Ghostty 里跑）也能用：扩展会到 `/Applications` 与 `~/Applications` 下的 `cmux*.app` 里找 app 内置的 CLI，再遍历 `~/Library/Application Support/cmux/*-last-socket-path` 找正在监听的 socket。唯一还需要你配合的是 cmux 那边的一档设置——`automation.socketControlMode` 默认 `cmuxOnly`，只接受「cmux 自己启动的进程」；要在外部终端里驱动 cmux，把它设成 `automation`（同一 macOS 用户的本地进程都能连，等于本机任何同用户进程都能控制 cmux，个人机可接受、共用机器就别开）。
 
 ## 用法
 
@@ -68,7 +70,7 @@ cmux 的 socket 路径偶有变化（app 重启后环境变量可能过期）：
 
 ## 已知边界
 
-- **只服务 cmux**：不在 cmux 里跑（app 没开、或终端不是从 cmux 启动）时会直接报错，不会假装成功。
+- **只服务 cmux**：cmux 没在跑时直接报错，不假装成功。从不是 cmux 启动的终端里用时，还得 cmux 那边放行——自动化 socket 默认 `cmuxOnly`，外部进程会被拒（`Access denied`）；把 `automation.socketControlMode` 设成 `automation` 即可，扩展在报错里会写明这个原因和改法。
 - **面板内切 source 是 cmux 上游的坑**：cmux 的 diff 面板里有个 source 切换器，点「Last turn」不会真正重算（其 sidecar 不支持 last-turn 作为可切换来源），只会停在原内容并一直转圈。要看 last-turn，请用 `/open-diff last-turn` 重新开一个面板，不要在旧面板里切。
 - **last-turn 依赖基线**：基线按「仓库 + workspace + surface + 会话」四条匹配，任何一条对不上就拿不到内容。这时 `/open-diff` 会自动退回 `unstaged` 并告诉你原因。
 - **窗口路由冲突**：根因已在自己维护的 cmux CLI 源码里修好（不再把环境变量注入面板路由），装上含该修复的 cmux 后，`/open-diff` 的 `last-turn` 直接可用。对尚未更新的旧版 app，扩展保留一段极简兼容：命中 `Conflicting Dock routing selectors`（或同类 socket 断连）时去掉两个环境变量重试，`last-turn` 暂时退到 `unstaged` 并在提示里写明。扩展不读写任何临时目录。重试时面板落在 cmux 的默认窗口，开了多个窗口时可能不是发起命令的那个窗口。

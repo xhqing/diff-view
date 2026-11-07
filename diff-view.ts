@@ -115,6 +115,21 @@ function cmuxCandidates(): string[] {
   const bundled = process.env.CMUX_BUNDLED_CLI_PATH;
   if (bundled && bundled.trim()) list.push(bundled.trim());
   list.push("cmux");
+  // 不在 cmux 里启动时（比如在 Ghostty 里跑的 pi 会话），上面两个候选一个都没有：
+  // `cmux` 一般不装进 PATH，CLI 只存在于 app 包内。这里扫 /Applications 与
+  // ~/Applications 下的 cmux*.app，取 app 内置的 CLI；release / staging 并存时全收，
+  // 由 runCmux 配 socket 逐个试，总能找到真在跑的那个实例。
+  for (const dir of ["/Applications", path.join(os.homedir(), "Applications")]) {
+    try {
+      for (const name of fs.readdirSync(dir)) {
+        if (!/^cmux.*\.app$/i.test(name)) continue;
+        const cli = path.join(dir, name, "Contents/Resources/bin/cmux");
+        if (fs.existsSync(cli)) list.push(cli);
+      }
+    } catch {
+      // 目录不存在 / 无权限：跳过，靠其它候选
+    }
+  }
   return Array.from(new Set(list));
 }
 
@@ -154,21 +169,19 @@ async function runCmux(
   timeoutMs = 60_000,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<RunResult> {
+  const sockets: (string | null)[] = [null, ...socketCandidates()];
   let last: RunResult | null = null;
   for (const command of cmuxCandidates()) {
-    const first = await run(command, args, cwd, timeoutMs, env);
-    if (first.ok) return first;
-    // 命令行本身不存在（ENOENT）就不用再试 socket 了，换下一个候选
-    if (first.code === null && /ENOENT/.test(first.error ?? "")) {
-      last = first;
-      continue;
-    }
-    last = first;
-    if (!/socket|pipe|connect|Connection/i.test(first.stderr + (first.error ?? ""))) continue;
-    for (const socketPath of socketCandidates()) {
-      const retried = await run(command, ["--socket", socketPath, ...args], cwd, timeoutMs, env);
-      if (retried.ok) return retried;
-      last = retried;
+    // 每条候选命令先按默认 socket 解析试一次（CLI 自己找最新的 marker 文件），
+    // 不行再显式带上每个候选 socket 重试——外部终端里 app 内置的 CLI 与 marker
+    // 文件不一定对得上，多组候选才能找到那个真在跑的实例。
+    for (const socketPath of sockets) {
+      const argv = socketPath ? ["--socket", socketPath, ...args] : args;
+      const result = await run(command, argv, cwd, timeoutMs, env);
+      if (result.ok) return result;
+      last = result;
+      // 命令本身不存在（ENOENT）：换下一个候选命令，不必再换 socket 重试
+      if (result.code === null && /ENOENT/.test(result.error ?? "")) break;
     }
   }
   return last ?? { ok: false, stdout: "", stderr: "cmux 命令不可用", code: null };
@@ -204,11 +217,19 @@ async function cmuxReachable(): Promise<{ ok: boolean; message: string }> {
   const result = await runCmux(["list-windows"], undefined, 15_000);
   if (result.ok) return { ok: true, message: "" };
   const detail = (result.stderr || result.error || "").trim().split("\n")[0];
+  const denied = /Access denied|only processes started inside cmux/i.test(
+    `${result.stderr}\n${result.error ?? ""}`,
+  );
   return {
     ok: false,
     message:
-      "连不上 cmux（app 没运行，或当前终端不是从 cmux 里启动的）。\n" +
-      `命令输出：${detail || "（无输出）"}`,
+      "连不上 cmux（app 没运行，或当前终端不被 cmux 接受）。\n" +
+      `命令输出：${detail || "（无输出）"}` +
+      (denied
+        ? "\n原因：cmux 的自动化 socket 默认只允许 cmux 自己启动的进程连接（automation.socketControlMode = cmuxOnly）。" +
+          "在外部终端（如 Ghostty）里用时，把 cmux 设置里的 automation.socketControlMode 改成 automation，" +
+          "或者在 cmux 里启动 pi。"
+        : ""),
   };
 }
 
