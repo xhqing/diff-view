@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="turn-diff" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-2.0.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-2.1.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
   [![Platform](https://img.shields.io/badge/Platform-git-000000)](#)
 
@@ -38,9 +38,12 @@
 
 ```
 /turn-diff              把上一轮的改动贴进会话（统计 + 文件列表）
-/turn-diff patch        同上，并带上 unified diff 正文
+/turn-diff patch        同上，并带上 unified diff 正文（多个文件时让你挑）
+/turn-diff patch 2      只看列表里的第 2 个文件
+/turn-diff patch src/   只看路径匹配这个片段 / 通配的文件
+/turn-diff 2 patch      再往前一轮，并带上正文
 /turn-diff head         改看「工作区相对 HEAD 的全量未提交改动」
-/turn-diff 2            再往前一轮
+/turn-diff head patch   同上，并带上正文
 /turn-diff on|off       每轮结束是否自动贴（默认关）
 ```
 
@@ -48,7 +51,10 @@
 
 ```bash
 turn-diff                   当前仓库上一轮的改动
-turn-diff --patch           连同这一轮的 unified diff 一起打印
+turn-diff --list            只列出这一轮改了哪些文件（带编号）
+turn-diff --patch           这一轮的完整 unified diff
+turn-diff --file 2          只看 --list 里的第 2 个文件
+turn-diff --file '*.ts'     只看路径匹配的文件
 turn-diff --repo ~/x        指定仓库
 turn-diff --turn 2          看再往前一轮（1 = 最近一轮）
 turn-diff --all             每个有轮次报告的仓库各一行摘要
@@ -65,7 +71,9 @@ diff 正文按「改动视图」来画，不是普通日志：
 - 新增行**绿底**，删除行**红底**；
 - 一对 `-` / `+` 行里，只有**真正变的那几个片段**用更亮的底色标出来，改一个词不会把整行刷一遍。
 
-默认跟随终端（只在 TTY 上上色）；`--color never` 关掉，`--color always` 在管道里也强制输出颜色。会话里的卡片用同一套配色，`/turn-diff patch` 会就地渲染正文（折叠时先给 30 行，展开看全）。
+默认跟随终端（只在 TTY 上上色）；`--color never` 关掉，`--color always` 在管道里也强制输出颜色。会话里的卡片用同一套配色。
+
+改动文件多的时候不会一次性糊满屏幕：`/turn-diff patch` 会弹出选择器（「全部」或某个文件），`/turn-diff patch <编号>|<片段>` 直接定位到一个文件；命令行对应 `--list` 与 `--file`。
 
 ## 工作原理
 

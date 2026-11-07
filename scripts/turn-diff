@@ -8,6 +8,8 @@
 用法：
   turn-diff                   打印当前仓库上一轮的改动
   turn-diff --patch           连同这一轮的具体改动（unified diff）一起打印
+  turn-diff --list            只列出这一轮改了哪些文件（带编号，给 --file 用）
+  turn-diff --file <N|模式>   只看某个文件的正文：编号（来自 --list）或路径子串 / 通配
   turn-diff --repo <路径>      指定仓库（默认当前目录所在的 git 仓库）
   turn-diff --turn 2          看再往前一轮（1 = 最近一轮）
   turn-diff --all             列出所有仓库各自上一轮的改动摘要
@@ -103,6 +105,58 @@ def turns_of(entry) -> list[dict]:
     if entry.get("files") is not None:
         return [entry]
     return []
+
+
+# ===== 按文件切分 =====
+
+
+def split_patch_by_file(patch: str) -> list[tuple[str, str]]:
+    """把整段 patch 按文件切开（返回 [(path, text)]），兼容没有 diff --git 头的老记录。"""
+    lines = patch.split("\n")
+    chunks: list[tuple[str, list[str]]] = []
+    current: list[str] = []
+    current_path = ""
+
+    def flush() -> None:
+        nonlocal current, current_path
+        if current:
+            chunks.append((current_path, current))
+        current, current_path = [], ""
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("diff --git "):
+            flush()
+            import re
+
+            match = re.match(r"^diff --git a/(.+?) b/(.+)$", line)
+            current_path = match.group(2) if match else ""
+            current.append(line)
+        elif line == "--- /dev/null":
+            import re
+
+            match = re.match(r"^\+\+\+ b/(.+)$", lines[index + 1] if index + 1 < len(lines) else "")
+            if match:
+                # 老记录的未跟踪文件段没有 diff --git 头：换文件时从这里切开
+                if current_path and current_path != match.group(1):
+                    flush()
+                current_path = match.group(1)
+            current.append(line)
+        elif not (line == "" and index == len(lines) - 1):
+            current.append(line)
+        index += 1
+    flush()
+    return [(path, "\n".join(body)) for path, body in chunks if "\n".join(body).strip()]
+
+
+def match_path(candidate: str, pattern: str) -> bool:
+    """先按子串匹配，再按 * / ? 通配（都忽略大小写）。"""
+    import fnmatch
+
+    lowered = candidate.lower()
+    pattern = pattern.lower()
+    return pattern in lowered or fnmatch.fnmatch(lowered, pattern)
 
 
 # ===== 彩色 patch =====
@@ -274,6 +328,14 @@ def main(argv: list[str]) -> int:
     as_json = "--json" in args
     show_all = "--all" in args
     want_patch = "--patch" in args or "-p" in args
+    want_list = "--list" in args
+    file_arg = None
+    if "--file" in args:
+        position = args.index("--file")
+        if position + 1 >= len(args):
+            die("--file 需要一个编号或路径片段（先用 --list 看编号）")
+        file_arg = args[position + 1]
+        want_patch = True
     color_choice = "auto"
     if "--color" in args:
         position = args.index("--color")
@@ -328,6 +390,13 @@ def main(argv: list[str]) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
+    if want_list:
+        for number, item in enumerate(report.get("files") or [], start=1):
+            mark = KIND_MARK.get(str(item.get("kind")), "M")
+            stat = "二进制" if item.get("binary") else stat_text(str(item.get("kind")), item.get("added", 0), item.get("deleted", 0), colored)
+            print(f"  {number}. {mark} {item.get('path')}  {stat}")
+        return 0
+
     print(fmt_report(report, report.get("generatedAt"), colored))
     if want_patch:
         patch = report.get("patch")
@@ -335,6 +404,20 @@ def main(argv: list[str]) -> int:
             print()
             print("（这一轮没有存 patch 正文：这份报告是旧版本落盘的，或本轮没有文本改动。当前工作区可以直接 `git diff`。）")
             return 0
+        if file_arg:
+            chunks = split_patch_by_file(patch)
+            if file_arg.isdigit():
+                files = report.get("files") or []
+                position = int(file_arg) - 1
+                if not 0 <= position < len(files):
+                    die(f"没有第 {file_arg} 个文件（先用 --list 看编号）。", 1)
+                wanted_path = str(files[position].get("path"))
+                chunks = [chunk for chunk in chunks if chunk[0] == wanted_path]
+            else:
+                chunks = [chunk for chunk in chunks if match_path(chunk[0], file_arg)]
+            if not chunks:
+                die(f"没有匹配 {file_arg!r} 的文件（先用 --list 看编号）。", 1)
+            patch = "\n".join(text for _, text in chunks)
         print()
         print("\n".join(render_patch(patch, colored)))
         if report.get("patchTruncated"):
