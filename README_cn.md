@@ -1,26 +1,25 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="diff-view" width="640">
+  <img src="assets/logo.svg" alt="turn-diff" width="640">
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE.md)
-  [![Version](https://img.shields.io/badge/Version-1.3.0-blue)](CHANGELOG.md)
+  [![Version](https://img.shields.io/badge/Version-2.0.0-blue)](CHANGELOG.md)
   [![Type](https://img.shields.io/badge/Type-pi%20extension-6E56CF)](#)
-  [![Platform](https://img.shields.io/badge/Platform-cmux-000000)](#)
+  [![Platform](https://img.shields.io/badge/Platform-git-000000)](#)
 
   [English](README.md)
 </div>
 
-# diff-view
+# turn-diff
 
-> 两种互不依赖的看改动方式：cmux 面板（`/open-diff`、`/close-diff`），或者直接汇报在 pi 会话里（`/diff-report`，纯 git、不依赖任何外部软件）。
+> 「这一轮 AI 改了什么？」——你提交提示词时记基线，这一轮结束时算增量，随时能在会话里或终端里看。
 
-这是 pi 的一个扩展。它自己**不渲染 diff**——cmux（基于 Ghostty 的终端应用）自带 diff viewer，`cmux diff` 能把 git 改动直接渲染成面板，`cmux close-surface` 能把面板关掉。本扩展只负责把它们包成顺手的两条命令，并记住「哪些面板是自己开的」，好让关闭动作精确、不误伤。
+这是一个只干一件事的 pi 扩展：报 git 仓库的「本轮 diff」。它不画面板、不比分支、不依赖任何其它程序在跑。
 
 ## 为什么需要它
 
-- **面板模式**（`/open-diff`）：光标停在 pi 会话里时，想快速看一眼「AI 刚才改了什么」，敲它就行，不用切窗口、不用记 `cmux diff` 的参数；
-- **会话内汇报**（`/diff-report`）：每轮结束时在会话末尾追加一张卡片，列出这一轮改了哪些文件、加减多少行。纯 git，不需要 cmux，也不进 LLM 上下文、不耗 token。
-- AI 也能调用 `open_diff` / `close_diff` 两个工具，在需要给你看改动时自己开、看完自己关；
-- 关闭只针对本扩展登记过的面板，用户自己开的 diff、普通终端、其它面板一律不碰。
+- 「你刚才改了什么」是最常问的问题，而 `git diff` 回答的是另一个问题：所有未提交改动，连昨天的残留一起算。
+- 按轮次切一份就准确了：只算「你提交提示词」到「这一轮结束」之间的变化。
+- 运行时几乎零成本：基线是一个 `git stash create` 的游离提交（不写 ref、不动工作区），报告是一条自定义 session entry，永远不进 LLM 上下文。
 
 ## 安装
 
@@ -28,94 +27,68 @@
 ./install.sh
 ```
 
-脚本把 `diff-view.ts` 拷到 `~/.pi/agent/extensions/diff-view.ts`。新会话自动生效；已经打开的 pi 会话执行 `/reload`。
+脚本部署两样东西：
 
-要求：macOS + cmux 正在运行（面板由 cmux 渲染，扩展只是命令层）。卸载删掉那个文件即可。
-
-不在 cmux 里启动的 pi 会话（比如在 Ghostty 里跑）也能用：扩展会到 `/Applications` 与 `~/Applications` 下的 `cmux*.app` 里找 app 内置的 CLI，再遍历 `~/Library/Application Support/cmux/*-last-socket-path` 找正在监听的 socket。唯一还需要你配合的是 cmux 那边的一档设置——`automation.socketControlMode` 默认 `cmuxOnly`，只接受「cmux 自己启动的进程」；要在外部终端里驱动 cmux，把它设成 `automation`（同一 macOS 用户的本地进程都能连，等于本机任何同用户进程都能控制 cmux，个人机可接受、共用机器就别开）。
+- `turn-diff.ts` → `~/.pi/agent/extensions/turn-diff.ts`（新会话自动加载；已开的会话执行 `/reload`）
+- `scripts/turn-diff` → `~/.local/bin/turn-diff`（命令行）
 
 ## 用法
 
+### 在 pi 会话里
+
 ```
-/open-diff                  打开当前仓库的 diff（有 last-turn 基线就用 last turn，否则 unstaged）
-/open-diff last-turn        只看这一轮 AI 改动
-/open-diff unstaged         工作区相对 HEAD 的全部改动
-/open-diff staged           暂存区相对 HEAD 的改动
-/open-diff branch           当前分支相对基线的改动
-/open-diff ~/Developer/x    打开指定仓库的 diff
-
-/close-diff                 关闭本会话打开的面板
-/close-diff --all           关闭所有会话打开的面板
-/close-diff ~/Developer/x   只关该仓库的面板
-
-/diff-report                把上一轮 AI 改了什么贴进会话（本轮增量）
-/diff-report head           改看「工作区相对 HEAD 的全量未提交改动」
-/diff-report patch          把这一轮的 unified diff 贴进会话
-/diff-report on             每轮结束自动贴（默认关）
-/diff-report off            取消自动贴
+/turn-diff              把上一轮的改动贴进会话（统计 + 文件列表）
+/turn-diff patch        同上，并带上 unified diff 正文
+/turn-diff head         改看「工作区相对 HEAD 的全量未提交改动」
+/turn-diff 2            再往前一轮
+/turn-diff on|off       每轮结束是否自动贴（默认关）
 ```
 
-### 命令行（完全不经过 pi）
+### 在终端里（不经过 pi）
 
 ```bash
-diff-report                 当前仓库上一轮的改动
-diff-report --repo ~/x      指定仓库
-diff-report --all           每个有轮次报告的仓库各一行摘要
-diff-report --patch         连同这一轮的具体改动（unified diff）一起打印
-diff-report --turn 2        看再往前一轮（1 = 最近一轮）
-diff-report --json          机器可读输出
-diff-report --since         用「一轮的基线 → 现在」重算（轮次结束后又改过东西时用）
+turn-diff                   当前仓库上一轮的改动
+turn-diff --patch           连同这一轮的 unified diff 一起打印
+turn-diff --repo ~/x        指定仓库
+turn-diff --turn 2          看再往前一轮（1 = 最近一轮）
+turn-diff --all             每个有轮次报告的仓库各一行摘要
+turn-diff --json            机器可读输出
+turn-diff --color always    强制上色（另有 auto / never）
 ```
 
-每个仓库保留最近 20 轮，并且每轮连同它的 unified diff 一起存（单轮上限 80 KB），所以 `--turn` 能翻更早的；没有文件改动的轮次也不会再把上一轮的报告冲掉。
+`turn-diff` 只读扩展落盘的状态，不启动 pi、不触发任何轮次。
 
-`install.sh` 会把命令行工具拷到 `~/.local/bin/diff-report`。它只读扩展落盘的报告，不启动 pi、不触发任何轮次，任何终端里随时能敲。
+## 颜色
 
-四个来源的差别：
+diff 正文按「改动视图」来画，不是普通日志：
 
-| 来源 | 看的是什么 | 何时可用 |
-|---|---|---|
-| `last-turn` | 这一轮 agent 提示词提交之前的基线（`git stash create` + untracked 快照）到现在 | cmux 的 pi hook 记录过当前会话的基线 |
-| `unstaged` | 工作区相对 HEAD 的全部改动 | 始终可用（默认后备） |
-| `staged` | 暂存区相对 HEAD 的改动 | 始终可用 |
-| `branch` | 当前分支相对基线分支的改动 | 始终可用（基线由 cmux 自己挑） |
+- 新增行**绿底**，删除行**红底**；
+- 一对 `-` / `+` 行里，只有**真正变的那几个片段**用更亮的底色标出来，改一个词不会把整行刷一遍。
 
-报告口径固定是**本轮增量**：基线 = 你提交提示词那一刻，对比 = 这一轮结束时的状态。默认什么都不贴，要用就手敲 `/diff-report` 或跑 `diff-report` 命令；`/diff-report head` 是唯一的全量口径（工作区相对 HEAD 的全部未提交改动）。扩展把每轮的基线与结果落盘在 `~/.pi/agent/state/cmux-diff/`，命令行工具读的就是这份状态。
-
-会话内汇报是一张自定义 session entry：写进会话文件、在对话里渲染，永远不发给模型。它按文件列状态字母（A / M / D / R）与 `+/-` 行数，默认最多 8 个文件、展开看全部；本轮没有任何文件变化时不打印任何东西。`/diff-report off` 可关掉自动汇报（开关存在 `~/.pi/agent/state/cmux-diff/settings.json`）。
-
-AI 侧对应两个工具：`open_diff`（参数 `source` / `path`，**不抢焦点**）和 `close_diff`（参数 `path` / `all`）。你手敲斜杠命令时会切到面板，AI 调工具时不会——抢不抢焦点按「谁发起的」区分。
+默认跟随终端（只在 TTY 上上色）；`--color never` 关掉，`--color always` 在管道里也强制输出颜色。会话里的卡片用同一套配色，`/turn-diff patch` 会就地渲染正文（折叠时先给 30 行，展开看全）。
 
 ## 工作原理
 
-1. `/open-diff` 解析出仓库根和来源；
-2. 调 `cmux diff --<source> --cwd <仓库>`（AI 调用时加 `--no-focus`）；
-3. 从输出里取面板引用（`OK surface=surface:... pane=...`），记进 `~/.pi/agent/state/cmux-diff/opened.json`；
-4. `/close-diff` 读这份登记，逐个 `cmux close-surface --surface <ref>`；面板若已被你手动关掉（`Surface ref not found`）按已关闭处理，顺便清理登记。
+1. `before_agent_start` 记基线：仓库根、`HEAD`、`git stash create` 生成的游离提交（已跟踪文件的脏改动，不写 ref、不动工作区）、当时未跟踪文件的指纹。
+2. `agent_settled` 拿基线和工作区做差：`git diff --numstat` 出行数、`--name-status` 出 A/M/D/R、完整 `git diff` 出 patch 正文；这一轮新冒出来的未跟踪文件按「新建文件」算。
+3. 统计和 patch 一起按仓库落盘（最近 20 轮）到 `~/.pi/agent/state/turn-diff/`，`/turn-diff`、命令行、会话卡片读的都是这份状态。
 
-cmux 的 socket 路径偶有变化（app 重启后环境变量可能过期）：扩展先用默认解析，失败再拿 `CMUX_SOCKET` / `CMUX_SOCKET_PATH` 和 `~/Library/Application Support/cmux/*-last-socket-path` 里的候选路径重试。
+为什么用 `git stash create` 而不是碰暂存区：它同时收编已暂存与未暂存的改动，且两边都不改动；生成的提交因为内容去重，几乎不占空间。
 
 ## 已知边界
 
-- **面板必须靠 cmux，会话内汇报不需要**：`/open-diff` / `/close-diff` 只在 cmux 在跑时可用。从不是 cmux 启动的终端里用时，还得 cmux 那边放行——自动化 socket 默认 `cmuxOnly`，外部进程会被拒（`Access denied`）；把 `automation.socketControlMode` 设成 `automation` 即可，扩展在报错里会写明这个原因和改法。
-- **面板内切 source 是 cmux 上游的坑**：cmux 的 diff 面板里有个 source 切换器，点「Last turn」不会真正重算（其 sidecar 不支持 last-turn 作为可切换来源），只会停在原内容并一直转圈。要看 last-turn，请用 `/open-diff last-turn` 重新开一个面板，不要在旧面板里切。
-- **last-turn 依赖基线**：基线按「仓库 + workspace + surface + 会话」四条匹配，任何一条对不上就拿不到内容。这时 `/open-diff` 会自动退回 `unstaged` 并告诉你原因。
-- **窗口路由冲突**：根因已在自己维护的 cmux CLI 源码里修好（不再把环境变量注入面板路由），装上含该修复的 cmux 后，`/open-diff` 的 `last-turn` 直接可用。对尚未更新的旧版 app，扩展保留一段极简兼容：命中 `Conflicting Dock routing selectors`（或同类 socket 断连）时去掉两个环境变量重试，`last-turn` 暂时退到 `unstaged` 并在提示里写明。扩展不读写任何临时目录。重试时面板落在 cmux 的默认窗口，开了多个窗口时可能不是发起命令的那个窗口。
-- **不记录历史快照**：原 VSCode 版会给每次文件编辑留「改动前快照」，可以逐步回放，代价是状态目录涨到约 925 MB。cmux 版直接复用 git 的 diff 能力，不落任何快照。
-
-## 项目沿革
-
-- 2026-10-11：作为「AI 改动可视化 + 跨会话变更通知」扩展建立（原名 `ai-edit-diff`）。
-- 2026-10-18：整合为 `diff-view`（pi 侧 `diff-view-pie` + VS Code 侧 `diff-view-vsce`）。
-- 2026-10-31：注销——改用 `add-mode` / `commit-mode` 暂停自动提交后直接 `git diff`，快照目录约 925 MB 也成了负担。
-- 2026-11-05：改建为 cmux 版（1.0.0）——去掉快照与通知机制，只保留 `/open-diff` / `/close-diff` 的顺手体验，diff 内容交给 cmux 渲染。
+- **只支持 git**：不是 git 仓库的目录直接跳过（没有基线可做差）。
+- **只有轮次口径**：报告回答「这一轮改了什么」；要「所有未提交改动」用 `/turn-diff head` 或直接 `git diff`。
+- **基线时就存在的未跟踪文件**：即使本轮又被改，也不会出现在报告里（git 没有它的 diff 基准）。
+- patch 只含文本：二进制、超过 200 KB 的未跟踪文件不并进正文；单轮 patch 上限 80 KB（统计仍然完整）。
+- 每个仓库保留最近 20 轮，更早的会被丢弃。
 
 ## 开发
 
-- 源文件：`diff-view.ts`（唯一实现，部署副本由 `install.sh` 拷贝，勿直接改副本）；
-- 状态目录：`~/.pi/agent/state/cmux-diff/`（面板登记，删掉不影响功能，只是丢失关闭记录）；
-- 语法自检：`node --experimental-strip-types --check` 与 pi 加载器口径一致，扩展写坏会让 pi 起不来。
+- `turn-diff.ts` — 扩展本体（单文件，除 `pi-tui` 外无依赖）
+- `scripts/turn-diff` — 命令行（Python 3，只用标准库）
+- `install.sh` — 两样一起部署；`node --experimental-strip-types --check turn-diff.ts` 是 CI 跑的语法门
 
 ## License
 
-Copyright (c) 2026 All Contributors. 以 [MIT License](LICENSE.md) 发布。
+Copyright (c) 2026 All Contributors。以 [MIT License](LICENSE.md) 发布。

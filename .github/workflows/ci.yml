@@ -3,7 +3,7 @@
 #   1. TypeScript 语法（与 pi 加载器同口径：Node 类型擦除）
 #   2. shell 脚本语法（install.sh）
 #   3. 版本号一致性（VERSION 是唯一权威：VERSION ↔ CHANGELOG ↔ 中英 README 徽章）
-#   4. 结构冒烟（唯一实现文件存在、install.sh 可执行、扩展注册了预期命令）
+#   4. 结构冒烟（扩展 / 命令行 / 安装脚本都在，扩展注册了预期命令与钩子）
 
 name: CI
 
@@ -26,7 +26,7 @@ jobs:
           node-version: '22'
 
       - name: TypeScript syntax (same parser as pi's loader)
-        run: node --experimental-strip-types --check diff-view.ts
+        run: node --experimental-strip-types --check turn-diff.ts
 
       - name: Shell script syntax
         run: bash -n install.sh
@@ -42,9 +42,12 @@ jobs:
 
       - name: Structure smoke test
         run: |
-          test -f diff-view.ts
+          test -f turn-diff.ts
           test -x install.sh
-          grep -q 'registerCommand("open-diff"' diff-view.ts
-          grep -q 'registerCommand("close-diff"' diff-view.ts
-          grep -q 'name: "open_diff"' diff-view.ts
-          grep -q 'name: "close_diff"' diff-view.ts
+          test -x scripts/turn-diff
+          grep -q 'registerCommand("turn-diff"' turn-diff.ts
+          grep -q 'registerEntryRenderer' turn-diff.ts
+          grep -q 'before_agent_start' turn-diff.ts
+          grep -q 'agent_settled' turn-diff.ts
+          python3 -c "import ast,sys; ast.parse(open('scripts/turn-diff').read())"
+          bash -n install.sh
